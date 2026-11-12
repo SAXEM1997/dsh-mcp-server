@@ -340,9 +340,9 @@ export function makeServices() {
 
   const sessionQuery = {
     async readSession(id) {
-      // Sessions the fake created through `admit` keep their own log; anything
-      // else (a session seeded by a test directly) shares the live array.
-      const stored = eventsBySession.get(id) ?? events
+      // An id this fake never served is a real miss: answering with the last
+      // session's log would make cross-session assertions pass by accident.
+      const stored = eventsBySession.get(id) ?? (id === currentSessionId ? events : [])
       return { session: { cwd: '/tmp', createdAt: Date.now() }, events: stored, inheritedEventCount: 0 }
     },
     async readTitleSnapshots(ids) {

@@ -208,6 +208,21 @@ try {
     const retry = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
     assert.equal(retry.status, 200, 'the link is usable again after an aborted upload')
   })
+
+  await check('a deployment without the attachment service explains itself', async () => {
+    const bare = await createPluginHarness({ label: 'file-upload-bare', withAttachments: false })
+    try {
+      await assert.rejects(
+        () => bare.call('dsh_prepare_upload', { files: [{ mediaType: 'image/png' }] }),
+        /no attachment service/,
+      )
+      const init = await bare.rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } })
+      const meta = init.result._meta?.['dsh-mcp-server'] ?? {}
+      assert.equal(meta.fileUpload?.supported, false, 'initialize reports the capability as absent')
+    } finally {
+      await bare.close()
+    }
+  })
 } finally {
   await h.close()
 }

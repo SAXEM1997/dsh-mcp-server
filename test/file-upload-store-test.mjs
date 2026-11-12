@@ -130,5 +130,24 @@ await check('a claimed slot is reclaimed if the upload never finishes', async ()
   assert.throws(() => store.begin(slot.uploadUrl.split('/').at(-1)), /unknown or expired/)
 })
 
+await check('declared length that disagrees with the bytes counts as a failed attempt', async () => {
+  const { store } = makeStore({ uploadMaxAttempts: 3 })
+  const [slot] = store.mint([{ mediaType: 'image/png', expectedBytes: 1024 }], { origin: 'http://x' })
+  const nonce = slot.uploadUrl.split('/').at(-1)
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      () => store.commit(store.begin(nonce), PNG_1PX, { declaredBytes: PNG_1PX.length + 50 }),
+      /content-length does not match/,
+      'the refusal is attributed to the body, not the link',
+    )
+  }
+  await assert.rejects(
+    () => store.commit(store.begin(nonce), PNG_1PX, { declaredBytes: PNG_1PX.length + 50 }),
+    /too many failed attempts/,
+    'the third refusal burns the link',
+  )
+  await assert.rejects(async () => store.begin(nonce), /unknown or expired/, 'the budget ran out')
+})
+
 for (const name of checks) process.stdout.write('ok - ' + name + '\n')
 process.stdout.write('\n' + checks.length + ' upload-store checks passed\n')

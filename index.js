@@ -481,8 +481,12 @@ export function apply(ctx, config = {}) {
     dshToolsState.via = registered.via
   }
 
+  // `supported` is read when `initialize` answers, not when the plugin loads:
+  // the attachment service may register after this plugin does.
   const fileUploadMeta = {
-    supported: uploadStore.available,
+    get supported() {
+      return uploadStore.available
+    },
     prepareTool: 'dsh_prepare_upload',
     method: 'PUT',
     maxFileBytes: uploadStore.limits.maxFileBytes,
