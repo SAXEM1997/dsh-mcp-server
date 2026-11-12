@@ -289,6 +289,30 @@ await check('a workspace created a moment ago can be saved into', async () => {
   assert.match(String(written), /ws_new/, 'validation reads through the cache, so a new workspace is savable')
 })
 
+await check('twenty sessions judging at once do not contaminate each other', async () => {
+  const workspaces = Array.from({ length: 5 }, (_, i) => ({ id: `ws_${i}`, path: `/repo/${i}`, sessionIds: [] }))
+  const registry = { list: () => workspaces, resolveByPath: async (path) => workspaces.find((workspace) => workspace.path === path) }
+  const scope = createToolScope({ registry, store: memoryStore(undefined) })
+  const agents = Array.from({ length: 20 }, (_, i) => ({ id: `a${i}`, session: { id: `s${i}`, header: { cwd: `/repo/${i % 5}` } } }))
+  assert.equal((await Promise.all(agents.map((agent) => scope.visibleFor(agent)))).filter(Boolean).length, 20)
+  await scope.save({ mode: 'selected', workspaceIds: ['ws_0'] })
+  // Only the four sessions opened in /repo/0.
+  assert.equal((await Promise.all(agents.map((agent) => scope.visibleFor(agent)))).filter(Boolean).length, 4)
+})
+
+await check('a judgement made while a save is writing still sees the old document', async () => {
+  const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }] })
+  let finish
+  const scope = createToolScope({ ...world, store: { read: undefined, write: () => new Promise((resolve) => { finish = resolve }) } })
+  const agent = agentOf('s1', '/repo/a')
+  const saving = scope.save({ mode: 'selected', workspaceIds: [] })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(await scope.visibleFor(agent), true, 'the new selection is not live until the write lands')
+  finish()
+  await saving
+  assert.equal(await scope.visibleFor(agent), false)
+})
+
 // --- summary -----------------------------------------------------------------
 
 console.log(`\n${passed} tool-scope checks passed, ${failures.length} failed`)
