@@ -64,7 +64,15 @@ export function makeServices() {
   }
   let pendingPrompt
   let currentSessionId
-  let seq = 0
+  // Sequence numbers are per session in DSH, so a naive reader that ignores the
+  // session id would happily resolve another session's event. Keeping them
+  // per-session here is what makes that bug testable.
+  const seqCounters = new Map()
+  const nextSeq = (sessionId = currentSessionId) => {
+    const next = (seqCounters.get(sessionId) ?? 0) + 1
+    seqCounters.set(sessionId, next)
+    return next
+  }
   const appliedPermissions = []
   const resolvedAgents = []
   const modelSelections = []
@@ -83,7 +91,7 @@ export function makeServices() {
       const assistant = spec.role === 'assistant'
       events.push({
         type: assistant ? 'assistant/message' : 'user/message',
-        seq: ++seq,
+        seq: nextSeq(),
         time: Date.now(),
         data: assistant
           ? { message: { content: [{ type: 'text', text: spec.text }] } }
@@ -94,7 +102,7 @@ export function makeServices() {
 
   /** Append raw session events, for folding approvals and questions. */
   function seedEvents(specs) {
-    for (const spec of specs) events.push({ seq: ++seq, time: Date.now(), ...spec })
+    for (const spec of specs) events.push({ seq: nextSeq(), time: Date.now(), ...spec })
   }
 
   /** Register extra list entries with their own titles, for paging and query coverage. */
@@ -170,7 +178,7 @@ export function makeServices() {
         ? session
         : session?.sessionId ?? session?.header?.id ?? session?.session?.id ?? currentSessionId
       const log = typeof target === 'string' ? eventsFor(target) : events
-      log.push({ type: 'permission/preset', seq: ++seq, time: Date.now(), data: { preset: name } })
+      log.push({ type: 'permission/preset', seq: nextSeq(typeof target === 'string' ? target : currentSessionId), time: Date.now(), data: { preset: name } })
     },
   }
 
@@ -219,13 +227,13 @@ export function makeServices() {
     pendingPrompt = request.content.map((part) => part.text).join('')
     events.push({
       type: 'user/message',
-      seq: ++seq,
+      seq: nextSeq(),
       time: Date.now(),
       data: { source: { kind: 'runtime-context' }, content: [{ type: 'text', text: 'INJECTED CONTEXT' }] },
     })
     events.push({
       type: 'user/message',
-      seq: ++seq,
+      seq: nextSeq(),
       time: Date.now(),
       // The real controller stores the whole content array, images included:
       // that is what `dsh_read_attachment` reads back.
@@ -291,11 +299,11 @@ export function makeServices() {
       }
       const assistant = {
         type: 'assistant/message',
-        seq: ++seq,
+        seq: nextSeq(),
         time: Date.now(),
         data: { message: { content: [{ type: 'text', text: REPLY }] } },
       }
-      const end = { type: 'turn/end', seq: ++seq, time: Date.now(), data: { reason: { kind: 'completed' } } }
+      const end = { type: 'turn/end', seq: nextSeq(), time: Date.now(), data: { reason: { kind: 'completed' } } }
       const before = events.slice()
       events.push(assistant, end)
       runningSessions.delete(currentSessionId)
@@ -661,7 +669,8 @@ export function makeServices() {
   return {
     services,
     webServer,
-    failNextSave: (value = true) => { services.attachments.__failNextSave = value },
+    // Fail the next `count` storage attempts, so a test can reach the burn.
+    failSaves: (count = 1) => { services.attachments.__failSaves = count },
     getPrompt: () => pendingPrompt,
     setBusy: (value) => { busy = value },
     archivedIds: () => [...archived],
@@ -745,8 +754,8 @@ export async function createPluginHarness(options = {}) {
     fake.services.attachments = {
       imageLimits: { maxImagesPerMessage: 20, maxMessageImageBytes: 200 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] },
       async saveImages(inputs) {
-        if (fake.services.attachments.__failNextSave === true) {
-          fake.services.attachments.__failNextSave = false
+        if ((fake.services.attachments.__failSaves ?? 0) > 0) {
+          fake.services.attachments.__failSaves -= 1
           throw new Error('the provider refused these bytes')
         }
         return inputs.map((input, index) => {

@@ -66,10 +66,17 @@ try {
 
   await check('another session\'s sequence number cannot reach this image', async () => {
     const other = await h.call('dsh_run_prompt', { prompt: 'unrelated', wait: false })
-    await assert.rejects(
-      () => h.call('dsh_read_attachment', { sessionId: other.sessionId, seq: imageEvent.seq }),
-      /no event with seq/,
-    )
+    // Sequence numbers restart at 1 per session, so this id exists in the other
+    // session too — a reader that ignored the session id would hand back the
+    // wrong image instead of refusing.
+    let error
+    try {
+      await h.call('dsh_read_attachment', { sessionId: other.sessionId, seq: imageEvent.seq })
+    } catch (thrown) {
+      error = thrown
+    }
+    assert.ok(error, 'the call must not resolve')
+    assert.match(error.message, /no event with seq|carries no image/, 'it refuses rather than answering from another session')
   })
 
   await check('an index past the last image is refused, not silently clamped', async () => {

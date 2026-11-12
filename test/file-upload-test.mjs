@@ -246,15 +246,49 @@ try {
     assert.equal(part.encodedBytes, PNG_1PX.length, 'without it the per-message byte ceiling sums to NaN')
   })
 
-  await check('a provider that refuses the bytes burns the link after the attempt budget', async () => {
+  await check('a provider that keeps refusing the bytes burns the link', async () => {
     const minted = await mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }])
     const [slot] = minted.uploads
-    h.failNextSave()
-    const first = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
-    assert.equal(first.status, 500, 'a provider refusal is a server error, not a caller error')
-    h.failNextSave(false)
-    const retry = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
-    assert.equal(retry.status, 200, 'the slot survives one provider hiccup')
+    h.failSaves(3)
+    const statuses = []
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      statuses.push((await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })).status)
+    }
+    assert.deepEqual(statuses.slice(0, 2), [500, 500], 'the first two refusals are retryable server errors')
+    assert.equal(statuses[2], 410, 'the third refusal spends the attempt budget')
+    const after = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
+    assert.equal(after.status, 410, 'a burned link stays burned')
+  })
+
+  await check('the slot is claimed before the body arrives, not after', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: 4096 }])
+    const [slot] = minted.uploads
+    const url = new URL(slot.uploadUrl)
+    // A stalled upload: headers and a few bytes, then nothing. If the claim
+    // happened only once the body was complete, the fast request below would win
+    // the slot instead of being turned away.
+    const stalled = http.request({
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      method: 'PUT',
+      headers: { 'content-type': 'image/png', 'transfer-encoding': 'chunked' },
+    })
+    stalled.on('error', () => {})
+    stalled.write(PNG_1PX.subarray(0, 10))
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    try {
+      const competitor = await fetch(slot.uploadUrl, {
+        method: 'PUT',
+        body: PNG_1PX,
+        // A regression that claims only after the body would leave this request
+        // waiting for its own body; fail the case instead of hanging the suite.
+        signal: AbortSignal.timeout(2000),
+      })
+      assert.equal(competitor.status, 409, 'a claim in progress must already be visible to a second caller')
+    } finally {
+      stalled.destroy()
+    }
   })
 } finally {
   await h.close()
