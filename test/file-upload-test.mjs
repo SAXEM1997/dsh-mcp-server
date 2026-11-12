@@ -132,6 +132,22 @@ try {
     assert.equal(typeof status.upload.storedFileIds, 'number')
     assert.ok(!JSON.stringify(status.upload).includes('/mcp-files/'), 'no address is published')
   })
+
+  await check('the upload url echoes the Host the caller used, ignoring spoofed forwarding headers', async () => {
+    const minted = await h.call('dsh_prepare_upload', { files: [{ mediaType: 'image/png' }] }, {
+      headers: { 'x-forwarded-host': 'evil.example', 'x-forwarded-proto': 'https' },
+    })
+    assert.match(minted.uploads[0].uploadUrl, /^http:\/\/127\.0\.0\.1:\d+\/mcp-files\//,
+      'X-Forwarded-* is ignored unless the deployment opts in')
+  })
+
+  await check('clientBaseUrl overrides the derived origin', async () => {
+    const minted = await h.call('dsh_prepare_upload', {
+      files: [{ mediaType: 'image/png' }],
+      clientBaseUrl: 'https://dsh.example.com:23000/some/path',
+    })
+    assert.equal(minted.uploads[0].uploadUrl, 'https://dsh.example.com:23000/mcp-files/' + minted.uploads[0].uploadUrl.split('/mcp-files/')[1])
+  })
 } finally {
   await h.close()
 }

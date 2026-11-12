@@ -223,7 +223,7 @@ minted ──PUT 成功──► stored ──fileIdTtlMs──► expired
 | `uploadMaxAttempts` | 3 | 1 – 10 | 单槽允许的失败尝试次数 |
 | `uploadRequireSha256` | `false` | — | 为 `true` 时 `sha256` 必填（缺 → `400`），并强制校验 |
 | `uploadGlobalBudgetBytes` | 512 MiB | 64 MiB – 4 GiB | 全局「已铸造未引用」的字节预算 |
-| `trustedProxies` | `[]` | — | 只有在列表里的 peer 才允许用 `X-Forwarded-*` |
+| `trustProxyHeaders` | `false` | — | 是否采信 `X-Forwarded-*`（该路由已要求 token，见 §5.7） |
 
 夹值在读取时做（照 `maxBodyBytes` 的既有写法，`index.js:547-549`），配置错也扩不出安全区。
 
@@ -233,12 +233,17 @@ minted ──PUT 成功──► stored ──fileIdTtlMs──► expired
 
 ```
 origin = clientBaseUrl（若本次调用传了）
-      ?? X-Forwarded-Proto + X-Forwarded-Host   ← 仅当 peer 在 trustedProxies 里
+      ?? X-Forwarded-Proto + X-Forwarded-Host   ← 仅当 trustProxyHeaders: true
       ?? Host 头
 ```
 
 **`X-Forwarded-*` 默认不信任**：任何客户端都能伪造这个头，把 `uploadUrl` 指到第三方。
-只有当请求的 `peer` 落在 `trustedProxies`（默认空）里时才采信。
+要采信必须显式打开 `trustProxyHeaders`。
+
+> 为什么是布尔开关而不是「可信代理 IP 列表」：这条路由的调用方在到达这段代码前**已经通过
+> token 鉴权**，而 `peer` 在插件里只是一个符号值（`'token'`/`'connection'`，`index.js:516`），
+> 拿不到真实对端地址。既然如此，把「是否采信转发头」做成部署级开关更诚实——它不是网络层
+> 信任，而是「我知道前面有代理，且这条路由只有持 token 的调用方能进来」。
 
 **路由形态**：`/mcp-files/<nonce>` 必须用 `kind: "prefix"` 注册（现有两个路由都是 `exact`，
 重复的 `(kind, path)` 会抛错；`WebRouteKind = "exact" | "prefix"`，`api-catalog.js:9921-9922`），

@@ -433,10 +433,6 @@ export function apply(ctx, config = {}) {
     return config.syncOnStart !== false
   }
 
-  const trustedProxies = Array.isArray(config.trustedProxies)
-    ? config.trustedProxies.filter((entry) => typeof entry === 'string' && entry.trim()).map((entry) => entry.trim())
-    : []
-
   const uploadStore = createUploadStore({
     attachments: ctx.get('attachments'),
     config,
@@ -569,6 +565,7 @@ export function apply(ctx, config = {}) {
     identify,
     logger: log,
     path,
+    trustProxyHeaders: config.trustProxyHeaders === true,
     maxBodyBytes: Number.isFinite(Number(config.maxBodyBytes))
       ? Math.max(1024, Math.min(64 * 1024 * 1024, Number(config.maxBodyBytes)))
       : undefined,
