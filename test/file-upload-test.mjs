@@ -6,6 +6,7 @@
  * Run: node test/file-upload-test.mjs
  */
 import assert from 'node:assert/strict'
+import http from 'node:http'
 
 import { createPluginHarness } from './helpers/plugin-harness.mjs'
 
@@ -185,6 +186,27 @@ try {
     await h.call('dsh_run_prompt', { prompt: 'three', fileIds: minted.uploads.map((slot) => slot.fileId), wait: false })
     const admitted = h.admittedRequests().filter((request) => (request.content ?? []).some((part) => part.type === 'image')).at(-1)
     assert.equal(admitted.content.filter((part) => part.type === 'image').length, 3)
+  })
+
+  await check('a client that hangs up mid-body frees the slot', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: 4096 }])
+    const [slot] = minted.uploads
+    await new Promise((resolve) => {
+      const url = new URL(slot.uploadUrl)
+      const request = http.request({
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method: 'PUT',
+        headers: { 'content-type': 'image/png', 'content-length': '4096' },
+      })
+      request.on('error', () => resolve())
+      request.write(PNG_1PX.subarray(0, 10))
+      setTimeout(() => { request.destroy(); resolve() }, 50)
+    })
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const retry = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
+    assert.equal(retry.status, 200, 'the link is usable again after an aborted upload')
   })
 } finally {
   await h.close()
