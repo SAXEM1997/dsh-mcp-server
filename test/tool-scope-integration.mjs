@@ -90,6 +90,23 @@ try {
     assert.equal(after.mode, 'global')
     assert.deepEqual(after.workspaceIds, before.workspaceIds, 'switching to global must not forget the selection')
   })
+  await check('a browser-shaped same-origin POST is admitted, a foreign Origin is not', async () => {
+    const host = new URL(h.address).host
+    const same = await fetch(h.scopeUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: `http://${host}` },
+      body: JSON.stringify({ mode: 'global' }),
+    })
+    assert.equal(same.status, 200, 'the settings page always sends an Origin; without it every save would 403')
+
+    const foreign = await fetch(h.scopeUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: 'http://evil.example' },
+      body: JSON.stringify({ mode: 'global' }),
+    })
+    assert.equal(foreign.status, 403)
+  })
+
 } finally {
   await h.close()
 }
