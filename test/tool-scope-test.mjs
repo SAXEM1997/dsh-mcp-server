@@ -167,6 +167,9 @@ await check('a workspace deleted after a positive hit stops being visible', asyn
   // AND unreachable by path, so neither lookup can resurrect it.
   world.registry.list = () => []
   world.registry.resolveByPath = async () => undefined
+  // The listing is cached for a few hundred milliseconds; waiting past it is what
+  // a real deletion looks like to a later step.
+  await new Promise((resolve) => setTimeout(resolve, 600))
   assert.equal(await scope.visibleFor(agentOf('s1', '/repo/hermes')), false)
   assert.ok((await scope.state()).notes.includes('scope-stale'))
 })
@@ -226,19 +229,30 @@ await check('global keeps the selection it was given, so switching back is one c
   assert.deepEqual((await reloaded.state()).workspaceIds, ['ws_a'], 'and the document on disk keeps it too')
 })
 
-await check('a session that changes directory is re-resolved, not answered from cache', async () => {
+await check('changing directory mid-session does not move the session between workspaces', async () => {
   const world = harnessWorld({
     workspaces: [
       { id: 'ws_a', path: '/repo/a', sessionIds: [] },
       { id: 'ws_b', path: '/repo/b', sessionIds: [] },
     ],
   })
-  let cwd = '/repo/a'
-  const agent = { id: 'a', session: { id: 's1', get cwd() { return cwd } } }
-  const scope = createToolScope({ ...world, workingDirectory: { get: () => cwd }, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
-  assert.equal(await scope.visibleFor(agent), true, 'resolved to the selected workspace')
-  cwd = '/repo/b'
-  assert.equal(await scope.visibleFor(agent), false, 'the remembered answer was for the old directory')
+  let live = '/repo/a'
+  const agent = { id: 'a', session: { id: 's1', header: { cwd: '/repo/a' } } }
+  const scope = createToolScope({ ...world, workingDirectory: { get: () => live }, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
+  assert.equal(await scope.visibleFor(agent), true, 'opened inside the selected workspace')
+  live = '/repo/b'
+  assert.equal(await scope.visibleFor(agent), true, 'a cd must not move the session out of it either')
+})
+
+await check('a session cannot cd its way into a selected workspace', async () => {
+  const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }] })
+  let live = '/somewhere/else'
+  // The identity is where it was opened; the live directory is the attack.
+  const agent = { id: 'a', session: { id: 's1', header: { cwd: '/somewhere/else' } } }
+  const scope = createToolScope({ ...world, workingDirectory: { get: () => live }, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
+  assert.equal(await scope.visibleFor(agent), false)
+  live = '/repo/a'
+  assert.equal(await scope.visibleFor(agent), false, 'tools are not a reward for cd')
 })
 
 // --- summary -----------------------------------------------------------------
