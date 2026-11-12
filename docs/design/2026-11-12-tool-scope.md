@@ -154,7 +154,10 @@ body: { mode: "global" | "selected", workspaceIds: ["ws_ab12"] }
 | 本实例已被 `dispose()`（插件被替换） | `409 scope-disposed` |
 | 盘上 `updatedAt` 与本实例最后读到的不一致 | `409 scope-conflict`（页面提示刷新后重试） |
 
-代价：多一次读盘（几百字节）与一个 `updatedAt` 字段；不改文档格式版本。
+代价：多一次读盘（几百字节）、一个 `updatedAt` 与一个 `writeId` 字段（后者用来区分同一毫秒的两次写）；不改文档格式版本。
+
+**冲突后必先读**：冲突时服务端会重读盘上文档（页面与 `dsh_status` 立刻显示赢家），并置一个
+「冲突待确认」闩；这一次 GET 之后才允许再次保存，避免客户端盲目重试把刚采纳的值又写回去。
 
 ## 5. 页面
 
@@ -205,9 +208,10 @@ scope: {
 | 413 | — | 请求体超限（复用现有上限） |
 | 415 | — | `content-type` 不是 JSON |
 | 409 | `scope-disposed` | 本实例已被替换（插件重载），拒绝写入 |
-| 409 | `scope-conflict` | 盘上文档已被别处改动，拒绝覆盖 |
+| 409 | `scope-conflict` | 盘上文档已被别处改动；服务端随即重读并**闩住**，必须先 GET 再存 |
 | 500 | `scope-write-failed` | 写文件失败，内存保持旧值 |
 | 500 | `scope-registry-unavailable` | 注册表抛错（不是「没有工作区」） |
+| 500 | `scope-write-unverified` | 写前读盘失败（无法确认没有并发写），不盲写 |
 | 501 | `scope-unsupported` | Host 无 `workspaceRegistry` |
 | 403 | — | 非 loopback / Origin 不在白名单（沿用现有） |
 

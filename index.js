@@ -451,7 +451,9 @@ export function apply(ctx, config = {}) {
   // saving a setting through the config editor reloads this plugin, which would
   // swap the registrations a running step already snapshotted.
   const toolScope = createToolScope({
-    registry: typeof ctx?.get === 'function' ? ctx.get('workspaceRegistry') : undefined,
+    // A getter, not a value: the registry can appear after this plugin is applied,
+    // and a fixed `undefined` would mean "unsupported" for the whole process.
+    getRegistry: () => (typeof ctx?.get === 'function' ? ctx.get('workspaceRegistry') : undefined),
     store: createFileStore(
       typeof config.toolScopeFile === 'string' && config.toolScopeFile
         ? resolve(config.toolScopeFile)

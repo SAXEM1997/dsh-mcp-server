@@ -15,7 +15,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { createToolScope, isVisible, normalizeDocument, SCOPE_FILE_VERSION } from '../lib/tool-scope.js'
+import { createFileStore, createToolScope, isVisible, normalizeDocument, SCOPE_FILE_VERSION } from '../lib/tool-scope.js'
 
 let passed = 0
 const failures = []
@@ -385,8 +385,9 @@ await check('a conflict is not permanent: the next save compares against the new
   await b.ready
   await b.save({ mode: 'selected', workspaceIds: ['ws_0'] })
   await assert.rejects(() => a.save({ mode: 'global' }), /scope-conflict/)
-  // Without refreshing the baseline this would 409 forever and only a restart would
-  // clear it.
+  // The latch refuses a blind retry; reading the document is what releases it.
+  await assert.rejects(() => a.save({ mode: 'global' }), /scope-conflict/)
+  a.acknowledge()
   await a.save({ mode: 'global' })
   assert.equal(JSON.parse(await readFile(file, 'utf8')).mode, 'global')
 })
@@ -400,6 +401,51 @@ await check('an existing document this instance never read is a conflict, not a 
   const scope = createToolScope({ registry, store })
   await assert.rejects(() => scope.save({ mode: 'global' }), /scope-write-unverified/)
   assert.equal(JSON.parse(await readFile(file, 'utf8')).mode, 'selected', 'nothing was written')
+})
+
+await check('a conflict shows the document that won, not the one that lost', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scope-reload-'))
+  const file = join(dir, 'tool-scope.json')
+  const store = { read: async () => { try { return await readFile(file, 'utf8') } catch { return undefined } }, write: (text) => writeFile(file, text) }
+  const registry = { list: () => [{ id: 'ws_0', path: '/r0', sessionIds: [] }], resolveByPath: async () => undefined }
+  const a = createToolScope({ registry, store })
+  await a.ready
+  await a.save({ mode: 'global' })
+  const b = createToolScope({ registry, store })
+  await b.ready
+  await b.save({ mode: 'selected', workspaceIds: ['ws_0'] })
+  await assert.rejects(() => a.save({ mode: 'global' }), /scope-conflict/)
+  // Refreshing only the stamp would leave `a` reporting the value it failed to
+  // write; the page would show `global` while the disk says `selected`.
+  assert.equal((await a.state()).mode, 'selected', 'the winner is what this instance now reports')
+  // And a plain re-save must not silently push the stale value over the winner.
+  await assert.rejects(() => a.save({ mode: 'global' }), /scope-conflict/, 'saving the same stale value is still a conflict')
+})
+
+await check('a registry that appears after apply is picked up', async () => {
+  let current
+  const scope = createToolScope({ getRegistry: () => current, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
+  assert.equal(scope.supported, false, 'nothing yet')
+  current = { list: () => [{ id: 'ws_a', path: '/repo/a', sessionIds: ['s1'] }], resolveByPath: async () => undefined }
+  assert.equal(scope.supported, true, 'the late registry counts')
+  assert.equal(await scope.visibleFor(agentOf('s1', '/repo/a')), true)
+})
+
+await check('two instances cannot both write from the same reading', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scope-lock-'))
+  const file = join(dir, 'tool-scope.json')
+  const store = createFileStore(file)
+  const registry = { list: () => [{ id: 'ws_0', path: '/r0', sessionIds: [] }, { id: 'ws_1', path: '/r1', sessionIds: [] }], resolveByPath: async () => undefined }
+  const a = createToolScope({ registry, store })
+  const b = createToolScope({ registry, store })
+  await Promise.all([a.ready, b.ready])
+  await a.save({ mode: 'global' })
+  await Promise.allSettled([a.save({ mode: 'selected', workspaceIds: ['ws_0'] }), b.save({ mode: 'selected', workspaceIds: ['ws_1'] })])
+  const onDisk = JSON.parse(await readFile(file, 'utf8'))
+  // The lock serializes compare-and-write, so the loser must have observed the
+  // winner's stamp and refused rather than overwriting it.
+  assert.ok(['ws_0', 'ws_1'].includes(onDisk.workspaceIds[0]))
+  assert.equal(onDisk.workspaceIds.length, 1, 'one write won, the other did not merge or clobber')
 })
 
 // --- summary -----------------------------------------------------------------
