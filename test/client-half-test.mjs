@@ -470,6 +470,11 @@ assert.equal(cleanButtons.length, 2, 'save and reset')
 assert.ok(cleanButtons.every((button) => button.props.disabled === true), 'an untouched draft has nothing to save')
 const dirtyButtons = saveRowButtons(exported.scopeRow(tScope, docOf({}), { mode: 'selected', workspaceIds: [] }, [], 'ready', undefined, { ...scopeHandlers, dirty: true }))
 assert.ok(dirtyButtons.every((button) => button.props.disabled === false), 'a changed draft enables saving')
+// A failed first read has no document to render; the row must still say so
+// instead of sitting on "loading" forever.
+const failedRows = exported.scopeRow(tScope, null, null, [], 'error', 'network down', scopeHandlers)
+assert.match(collectText(failedRows).join(''), /network down/)
+
 checks.push('the save button reports whether there is anything to save')
 
 checks.push('the tool-scope rows follow the draft and refuse to pretend when unsupported')

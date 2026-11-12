@@ -168,6 +168,26 @@ await check('a failing scope answers 500 instead of hanging the request', async 
   })
 })
 
+await check('a registry that throws is reported as degraded, not as an empty Harness', async () => {
+  const scope = fakeScope()
+  const registry = { list: () => { throw new Error('registry down') } }
+  await withServer({ scope, registry }, async (base) => {
+    const body = await (await fetch(base)).json()
+    assert.deepEqual(body.workspaces, [])
+    assert.ok(body.notes.includes('scope-registry-degraded'), JSON.stringify(body.notes))
+  })
+})
+
+await check('a JSON null body is a 400, not a 500 with internals', async () => {
+  const scope = fakeScope()
+  await withServer({ scope }, async (base) => {
+    const response = await fetch(base, { method: 'POST', headers: { 'content-type': 'application/json' }, body: 'null' })
+    assert.equal(response.status, 400)
+    assert.equal((await response.json()).code, 'invalid-body')
+    assert.equal(scope.saved.length, 0, 'and nothing was written')
+  })
+})
+
 await check('an oversized body is a 413 with JSON, not a dropped connection', async () => {
   const scope = fakeScope()
   await withServer({ scope, maxBodyBytes: 1024 }, async (base) => {
