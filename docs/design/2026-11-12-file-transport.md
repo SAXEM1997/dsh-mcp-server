@@ -9,7 +9,7 @@
 > ④ `dsh_read_attachment` 增加可选 `index`——`seq` 只定位事件，而一个事件可能带多张图。
 > ⑤ `dsh_status.upload` 的字段叫 `supported`（与 `_meta.fileUpload.supported` 一致），§7 写的 `enabled` 作废。
 > ⑥ `name` 会随 `saveImages` 成为附件的显示名，不再只是回显。
-> ⑦ 工具错误的 HTTP 状态以 `error.data.httpStatus` 暴露，MCP 的 code 只有 invalidParams/internalError 两级。
+> ⑦ 上传端点的状态码以 **`structuredContent.httpStatus`** 随失败结果返回（400/404/409/410/413/415/429）；工具失败在 MCP 里是 `isError` 结果而非 JSON-RPC error，所以它只能走 `structuredContent`，不能走 `error.data`。`dsh_read_attachment` 不走这条映射，没有该字段。
 > ⑧ `restrictToOwner` 打开时，`fileId` 绑定铸造它的调用方；别人的 id 一律按「unknown fileId」处理。
 > ⑨ 上传路由对非 PUT 回 405；`maxEdge` 夹在 [64,4096]，`readImageRequest` 的 `maxBytes` 固定 8 MiB。
 > ⑩ `content-type` 不符也计入尝试预算（否则可无限探测）；过期与不存在的链接回同一句话，避免探测 nonce 是否存在。

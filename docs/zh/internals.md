@@ -118,12 +118,19 @@ git push origin v0.23.0   # 触发 .github/workflows/publish.yml
 
   | 子目录 | 内容 | 可以删吗 |
   |---|---|---|
-  | `objects/` | 归一化后的图片对象（`fileId` 指向它） | **不能**：删了历史会话里的图就没了 |
+  | `objects/` | 归一化后的图片对象（`fileId` 就指向这里的某个对象） | **不能**：删了历史会话里的图就没了 |
   | `file-objects/` | 原始上传文件（按内容寻址；`files/` 下另有一层以原文件名暴露的硬链接） | **不能**：同上 |
   | `files/` | 上面那些文件的命名入口（同一 inode 的硬链接） | **不能** |
-  | `request-images/` | 为模型请求生成的缩放变体 | 可以，按需重建 |
+  | `$DSH_HOME/cache/attachments/request-images/` | 为模型请求生成的缩放变体（**不在此目录**，是另建的缓存） | 可以，按需重建 |
   | `tmp/` | 上传过程中的临时区 | 可以 |
 
-  查看占用：`du -sh "$DSH_HOME/attachments"`；按文件看最大者：
-  `find "$DSH_HOME/attachments" -type f -printf '%s %p\n' | sort -rn | head`。
-  参考：一台日更使用的桌面 Harness 上，该目录约 52 MB / 141 个文件，近 30 天新增 13 MiB，而磁盘余量 408 GB——按这个量级，清理不是近期问题。真要回收只能停机后手工删最旧的对象，并接受那些会话里的图片/文件从此读不出来。
+  `request-images` 用的是另一处缓存（`$DSH_HOME/cache/attachments/`），老的 `attachments/v1/request-images/` 是历史遗留目录，可以直接删。查看占用要把两边都算上：
+
+  ```bash
+  DSH_HOME="${DSH_HOME:-$HOME/.dsh}"
+  du -sh "$DSH_HOME/attachments" "$DSH_HOME/cache/attachments" 2>/dev/null
+  find "$DSH_HOME/attachments" -type f -exec ls -l {} + | sort -k5 -rn | head
+  ```
+
+  `find -printf` 是 GNU 扩展，macOS 上不能直接用，所以上面用的是 `ls -l` 排序。
+  参考：一台日更使用的桌面 Harness 上，`attachments/` 约 52 MB / 141 个文件（其中图片对象 19 MB、近 30 天新增 13 MiB），`cache/attachments/` 约 204 KB，磁盘余量 408 GB——按这个量级，清理不是近期问题。真要回收只能停机后手工删最旧的对象，并接受那些会话里的图片/文件从此读不出来。

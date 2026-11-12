@@ -223,6 +223,18 @@ try {
       await bare.close()
     }
   })
+
+  await check('a tool failure carries the upload status machine-readably', async () => {
+    const body = await h.rpc({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: { name: 'dsh_run_prompt', arguments: { prompt: 'x', fileIds: ['f_never_minted'], wait: false } },
+    })
+    const failure = body?.error ?? body?.result
+    assert.ok(failure, 'the call failed as expected')
+    assert.equal(failure.structuredContent?.httpStatus, 404, 'the caller can tell a missing id from a bad argument without parsing prose')
+  })
 } finally {
   await h.close()
 }
