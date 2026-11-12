@@ -177,6 +177,7 @@ await check('file ids stay with the caller that minted them when restrictToOwner
   await store.commit(store.begin(slot.uploadUrl.split('/').at(-1)), PNG_1PX)
   assert.ok(store.resolve(slot.fileId, { owner: 'client-a' }))
   assert.throws(() => store.resolve(slot.fileId, { owner: 'client-b' }), /unknown fileId/)
+  assert.throws(() => store.resolve(slot.fileId, {}), /unknown fileId/, 'an anonymous caller cannot reach a named upload')
 })
 
 for (const name of checks) process.stdout.write('ok - ' + name + '\n')
