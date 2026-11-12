@@ -661,6 +661,7 @@ export function makeServices() {
   return {
     services,
     webServer,
+    failNextSave: (value = true) => { services.attachments.__failNextSave = value },
     getPrompt: () => pendingPrompt,
     setBusy: (value) => { busy = value },
     archivedIds: () => [...archived],
@@ -742,8 +743,12 @@ export async function createPluginHarness(options = {}) {
   if (withAttachments) {
     const saved = []
     fake.services.attachments = {
-      imageLimits: { maxImagesPerMessage: 20, maxMessageImageBytes: 200 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'] },
+      imageLimits: { maxImagesPerMessage: 20, maxMessageImageBytes: 200 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] },
       async saveImages(inputs) {
+        if (fake.services.attachments.__failNextSave === true) {
+          fake.services.attachments.__failNextSave = false
+          throw new Error('the provider refused these bytes')
+        }
         return inputs.map((input, index) => {
           const ref = {
             attachmentId: 'att_' + (saved.length + index + 1),

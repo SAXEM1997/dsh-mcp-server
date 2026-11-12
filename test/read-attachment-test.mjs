@@ -71,6 +71,13 @@ try {
       /no event with seq/,
     )
   })
+
+  await check('an index past the last image is refused, not silently clamped', async () => {
+    await assert.rejects(
+      () => h.call('dsh_read_attachment', { sessionId, seq: imageEvent.seq, index: 5 }),
+      /carries 1 image/,
+    )
+  })
 } finally {
   await h.close()
 }

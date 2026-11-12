@@ -14,6 +14,11 @@
 > ⑨ 上传路由对非 PUT 回 405；`maxEdge` 夹在 [64,4096]，`readImageRequest` 的 `maxBytes` 固定 8 MiB。
 > ⑩ `content-type` 不符也计入尝试预算（否则可无限探测）；过期与不存在的链接回同一句话，避免探测 nonce 是否存在。
 > ⑪ 每次铸造的字节上限只统计**声明过**的 `expectedBytes`；未声明者按「单文件上限」占槽但不算进这笔账，否则默认配置下 4 张图就会被拒。
+> ⑫ 只宣传 DSH 真收的四种类型（png/jpeg/webp/gif）；`avif` 去掉，否则 mint 通过、落盘被拒。
+> ⑬ 回执里的 `storedBytes`/`mediaType` 取**存储后的 ref 值**，不是上传字节的原值（提供方可能重编码/缩放）。
+> ⑭ 投递的 image part 带 `encodedBytes`：DSH 按它累加单条消息的图片字节上限，缺了会变成 `NaN` 而失效。
+> ⑮ `index` 越界报错，不静默夹到边界；归属校验失败的消息里回显 `fileId`。
+> ⑯ 存储提供方拒绝字节计一次尝试（3 次烧槽），不无限重试。
 
 ## 1. 问题
 

@@ -235,6 +235,27 @@ try {
     assert.ok(failure, 'the call failed as expected')
     assert.equal(failure.structuredContent?.httpStatus, 404, 'the caller can tell a missing id from a bad argument without parsing prose')
   })
+
+  await check('the delivered image part tells the Harness how many bytes it carries', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }])
+    const [slot] = minted.uploads
+    await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
+    await h.call('dsh_run_prompt', { prompt: 'sized', fileIds: [slot.fileId], wait: false })
+    const admitted = h.admittedRequests().filter((request) => (request.content ?? []).some((part) => part.type === 'image')).at(-1)
+    const part = admitted.content.find((entry) => entry.type === 'image')
+    assert.equal(part.encodedBytes, PNG_1PX.length, 'without it the per-message byte ceiling sums to NaN')
+  })
+
+  await check('a provider that refuses the bytes burns the link after the attempt budget', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }])
+    const [slot] = minted.uploads
+    h.failNextSave()
+    const first = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
+    assert.equal(first.status, 500, 'a provider refusal is a server error, not a caller error')
+    h.failNextSave(false)
+    const retry = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
+    assert.equal(retry.status, 200, 'the slot survives one provider hiccup')
+  })
 } finally {
   await h.close()
 }
