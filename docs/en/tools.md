@@ -9,6 +9,8 @@ Twenty-six MCP tools, two resources and one resource template — each shaped so
 | MCP tool | Purpose |
 |---|---|
 | `dsh_run_prompt` | Start a **new** DSH session and run one prompt; returns the assistant's final text and the new `sessionId`. Supports `cwd`, `agentPreset`, `permissionPreset`, `model` (`provider/model`), `wait: false`, `timeoutMs`. |
+| `dsh_prepare_upload` | Mint upload links for a batch of images: returns `fileId` and `uploadUrl`; the client `PUT`s the bytes (the nonce in the link is the capability, no endpoint token needed). Optional `clientBaseUrl` overrides where the returned URL points. |
+| `dsh_read_attachment` | Read one image an event recorded back as an MCP `image` content block (`sessionId`, `seq`, optional `index`, `maxEdge`). |
 | `dsh_continue_session` | Send a prompt to an **existing** session (resuming it if it is cold). Keeps the session's context and workspace; `permissionPreset` re-pins the session's sandbox mode and approval policy before the prompt, and `model` (`provider/model`) overrides the session's model. Without `model` the session keeps the model it already runs. |
 | `dsh_ask_session` | Ask one session a question it **must answer**, and wait for the answer. The question gets an id (`q-…`), and the call does not return first — the asking turn cannot end without one. Only the addressed session may answer; while the question is open, the id-only reminder is injected into the target's own next steps (never a wake-up). `timeoutMs` (default 0) sets an optional deadline. |
 | `dsh_answer_question` | Answer a must-reply question by id, from the addressed session. The waiting `dsh_ask_session` call returns this text and the asking turn continues. |

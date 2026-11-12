@@ -2,13 +2,15 @@
 
 > 属于 [DSH MCP Server](../../README.md) · [文档索引](../README.md)
 
-26 个 MCP 工具、2 个资源和 1 个资源模板——每一项的设计都保证：任何一次调用都不会把整个会话一次性倾倒出来。
+28 个 MCP 工具、2 个资源和 1 个资源模板——每一项的设计都保证：任何一次调用都不会把整个会话一次性倾倒出来。
 
 ## 暴露的内容
 
 | MCP 工具 | 用途 |
 |---|---|
 | `dsh_run_prompt` | 启动一个**新的** DSH 会话并运行一个提示词；返回助手最终的文本和新的 `sessionId`。支持 `cwd`、`agentPreset`、`permissionPreset`、`model`（`provider/model`）、`wait: false`、`timeoutMs`。 |
+| `dsh_prepare_upload` | 为一批图片铸造上传链接：返回 `fileId` 与 `uploadUrl`，客户端把字节 `PUT` 上去即可（链接里的 nonce 就是凭据，不需要端点 token）。可选 `clientBaseUrl` 覆盖返回地址的来源。 |
+| `dsh_read_attachment` | 把一个会话事件里的图片读回来，作为 MCP `image` 内容块返回（`sessionId`、`seq`，可选 `index`、`maxEdge`）。 |
 | `dsh_continue_session` | 向一个**已有**会话发送提示词（若它处于冷状态则恢复它）。保留会话的上下文和工作区；`permissionPreset` 在提示词之前重新固定会话的沙箱模式和审批策略，`model`（`provider/model`）覆盖会话的模型。未提供 `model` 时，会话沿用当前正在运行的模型。 |
 | `dsh_ask_session` | 向某个会话提出一个它**必须回答**的问题，并等待答案。问题会获得一个 id（`q-…`），而调用不会先返回——提问的回合在没有答案的情况下无法结束。只有被问到的会话可以回答；问题未决期间，只携带 id 的提醒会注入目标会话自己的后续步骤（绝不会唤醒它）。`timeoutMs`（默认 0）设置可选的截止时间。 |
 | `dsh_answer_question` | 由被问到的会话按 id 回答一个必须回复的问题。正在等待的 `dsh_ask_session` 调用会返回这段文本，提问的回合继续。 |
