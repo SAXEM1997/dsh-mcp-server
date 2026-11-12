@@ -149,5 +149,35 @@ await check('declared length that disagrees with the bytes counts as a failed at
   await assert.rejects(async () => store.begin(nonce), /unknown or expired/, 'the budget ran out')
 })
 
+await check('a content-type probe burns the same attempt budget', async () => {
+  const { store } = makeStore({ uploadMaxAttempts: 2 })
+  const [slot] = store.mint([{ mediaType: 'image/png', expectedBytes: 1024 }], { origin: 'http://x' })
+  const nonce = slot.uploadUrl.split('/').at(-1)
+  assert.throws(() => store.begin(nonce, 'text/plain'), /minted for image\/png/)
+  assert.throws(
+    () => store.begin(nonce, 'text/plain'),
+    /too many failed attempts/,
+    'guessing types is not free',
+  )
+})
+
+await check('an expired link answers exactly like a missing one', async () => {
+  const { store, advance } = makeStore({ uploadTtlMs: 60_000 })
+  const [slot] = store.mint([{ mediaType: 'image/png', expectedBytes: 1024 }], { origin: 'http://x' })
+  const nonce = slot.uploadUrl.split('/').at(-1)
+  advance(61_000)
+  const expired = (() => { try { store.begin(nonce) } catch (error) { return error.message } })()
+  const missing = (() => { try { store.begin('not-a-real-nonce') } catch (error) { return error.message } })()
+  assert.equal(expired, missing, 'the two cases are indistinguishable')
+})
+
+await check('file ids stay with the caller that minted them when restrictToOwner is on', async () => {
+  const { store } = makeStore({ restrictToOwner: true })
+  const [slot] = store.mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }], { origin: 'http://x', owner: 'client-a' })
+  await store.commit(store.begin(slot.uploadUrl.split('/').at(-1)), PNG_1PX)
+  assert.ok(store.resolve(slot.fileId, { owner: 'client-a' }))
+  assert.throws(() => store.resolve(slot.fileId, { owner: 'client-b' }), /unknown fileId/)
+})
+
 for (const name of checks) process.stdout.write('ok - ' + name + '\n')
 process.stdout.write('\n' + checks.length + ' upload-store checks passed\n')
