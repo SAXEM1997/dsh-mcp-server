@@ -105,7 +105,7 @@ try {
     const parts = admitted.content
     assert.equal(parts[0].type, 'text')
     assert.equal(parts[1].type, 'image')
-    assert.match(parts[1].attachment.id, /^att_\d+$/)
+    assert.match(parts[1].attachment.attachmentId, /^att_\d+$/)
     assert.equal(parts[1].attachment.mediaType, 'image/png')
   })
 

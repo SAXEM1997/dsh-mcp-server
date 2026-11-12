@@ -162,8 +162,8 @@ assert.equal(Boolean(switches[3].props.disabled), false, 'the sync switch is ope
 checks.push('every switch is operable in the ready state')
 const panelCopy = labels.join(' ')
 assert.equal(/\b20 tools\b|20 个工具/.test(panelCopy), false, 'the page does not advertise a stale tool count')
-assert.match(panelCopy, /27 tools/, 'twenty-seven')
-checks.push('the page copy matches the twenty-six published tools')
+assert.match(panelCopy, /28 tools/, 'twenty-eight')
+checks.push('the page copy matches the twenty-eight published tools')
 
 assert.match(validateConfigPatch({ exposeToDsh: true, typo: 1 }).error, /Unknown field/, 'unknown fields are refused, not ignored')
 assert.equal(validateConfigPatch({ internalMessageStyle: 'card' }).patch.internalMessageStyle, 'card', 'the transcript style is a validated field')

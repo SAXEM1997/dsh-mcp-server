@@ -53,7 +53,15 @@ export function makeContext(services, disposers, hooks = new Map()) {
 
 /** Fake DSH services with one scripted turn. */
 export function makeServices() {
-  const events = []
+  // Sessions are separate document stores in DSH: a fake that shared one list
+  // would let one session's sequence numbers resolve inside another.
+  const eventsBySession = new Map()
+  let events = []
+  /** The durable log of one session, created on first use. */
+  function eventsFor(sessionId) {
+    if (!eventsBySession.has(sessionId)) eventsBySession.set(sessionId, [])
+    return eventsBySession.get(sessionId)
+  }
   let pendingPrompt
   let currentSessionId
   let seq = 0
@@ -153,7 +161,16 @@ export function makeServices() {
       appliedPermissions.push({ session, name })
       // Mirror the durable event the real service appends, so the transcript
       // fold can be exercised over the same log the plugin reads.
-      events.push({ type: 'permission/preset', seq: ++seq, time: Date.now(), data: { preset: name } })
+      // Resolve the session before its first prompt: the real service records
+      // the preset on the session it was applied to, which may not be the one
+      // currently being admitted.
+      // The fake's "live session" handle carries a placeholder id; the durable
+      // event belongs to the session this prompt is creating.
+      const target = typeof session === 'string'
+        ? session
+        : session?.sessionId ?? session?.header?.id ?? session?.session?.id ?? currentSessionId
+      const log = typeof target === 'string' ? eventsFor(target) : events
+      log.push({ type: 'permission/preset', seq: ++seq, time: Date.now(), data: { preset: name } })
     },
   }
 
@@ -198,6 +215,7 @@ export function makeServices() {
   function admit(request) {
     admittedRequests.push(request)
     currentSessionId = request.sessionId
+    events = eventsFor(request.sessionId)
     pendingPrompt = request.content.map((part) => part.text).join('')
     events.push({
       type: 'user/message',
@@ -209,7 +227,9 @@ export function makeServices() {
       type: 'user/message',
       seq: ++seq,
       time: Date.now(),
-      data: { source: { kind: 'user' }, content: [{ type: 'text', text: pendingPrompt }] },
+      // The real controller stores the whole content array, images included:
+      // that is what `dsh_read_attachment` reads back.
+      data: { source: { kind: 'user' }, content: request.content },
     })
     return { accepted: true }
   }
@@ -320,8 +340,10 @@ export function makeServices() {
 
   const sessionQuery = {
     async readSession(id) {
-      assert.equal(id, currentSessionId)
-      return { session: { cwd: '/tmp', createdAt: Date.now() }, events, inheritedEventCount: 0 }
+      // Sessions the fake created through `admit` keep their own log; anything
+      // else (a session seeded by a test directly) shares the live array.
+      const stored = eventsBySession.get(id) ?? events
+      return { session: { cwd: '/tmp', createdAt: Date.now() }, events: stored, inheritedEventCount: 0 }
     },
     async readTitleSnapshots(ids) {
       titleLookups.push([...ids])
@@ -723,15 +745,29 @@ export async function createPluginHarness(options = {}) {
       imageLimits: { maxImagesPerMessage: 20, maxMessageImageBytes: 200 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'] },
       async saveImages(inputs) {
         return inputs.map((input, index) => {
-          const ref = { id: 'att_' + (saved.length + index + 1), mediaType: input.mediaType, bytes: input.data.length }
+          const ref = {
+            attachmentId: 'att_' + (saved.length + index + 1),
+            mediaType: input.mediaType,
+            width: 1,
+            height: 1,
+            bytes: input.data.length,
+          }
           saved.push({ ...ref, data: Buffer.from(input.data) })
           return ref
         })
       },
-      async readImageRequest(ref) {
-        const found = saved.find((entry) => entry.id === ref?.id)
+      async readImageRequest(ref, target) {
+        const found = saved.find((entry) => entry.attachmentId === ref?.attachmentId)
         if (!found) throw new Error('unknown attachment ' + JSON.stringify(ref))
-        return { data: found.data, mimeType: found.mediaType }
+        return {
+          variantId: 'v_' + found.attachmentId,
+          attachment: found,
+          data: found.data,
+          mediaType: found.mediaType,
+          width: target?.width ?? 1,
+          height: target?.height ?? 1,
+          bytes: found.data.byteLength,
+        }
       },
       __saved: saved,
     }
