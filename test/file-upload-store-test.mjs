@@ -96,5 +96,29 @@ await check('an image whose declared dimensions exceed the ceiling is refused', 
   )
 })
 
+
+await check('minting is rate limited instead of unbounded', async () => {
+  const { store } = makeStore({ uploadMaxFiles: 10 })
+  for (let round = 0; round < 6; round += 1) {
+    store.mint(Array.from({ length: 10 }, () => ({ mediaType: 'image/png', expectedBytes: 1024 })), { origin: 'http://x' })
+  }
+  assert.throws(
+    () => store.mint([{ mediaType: 'image/png', expectedBytes: 1024 }], { origin: 'http://x' }),
+    /too many upload sessions/,
+    'the seventh mint inside a minute is refused',
+  )
+})
+
+await check('repeated attempts on one link are rate limited', async () => {
+  const { store } = makeStore({ uploadMaxAttempts: 10 })
+  const [slot] = store.mint([{ mediaType: 'image/png' }], { origin: 'http://x' })
+  const nonce = slot.uploadUrl.split('/').at(-1)
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const claimed = store.begin(nonce)
+    store.release(claimed)
+  }
+  assert.throws(() => store.begin(nonce), /too many upload attempts/)
+})
+
 for (const name of checks) process.stdout.write('ok - ' + name + '\n')
 process.stdout.write('\n' + checks.length + ' upload-store checks passed\n')

@@ -1,6 +1,11 @@
 # 文件传输：预签名上传 + 图片读取（设计）
 
 > 2026-11-12 · 对应 issue #4 · 状态：**已批准（v3）**
+>
+> **实现期修订（v4，2026-11-12）**：① `_meta` 的命名空间键用 `dsh-mcp-server`（`SERVER_NAME` 常量，
+> `lib/protocol.js:44`），不是本文早先写的 `dsh-mcp-btwy`；② `trustedProxies`（IP 名单）改为
+> `trustProxyHeaders`（布尔开关）——插件里 `peer` 只有 `'token'`/`'connection'` 两个符号值，
+> 拿不到对端地址，见 §5.7；③ 槽位限流按**槽位数**计（一次铸造 N 个算 N 次），不是按调用次数。
 
 ## 1. 问题
 
