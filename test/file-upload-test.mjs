@@ -148,6 +148,44 @@ try {
     })
     assert.equal(minted.uploads[0].uploadUrl, 'https://dsh.example.com:23000/mcp-files/' + minted.uploads[0].uploadUrl.split('/mcp-files/')[1])
   })
+
+  await check('a body larger than the endpoint ceiling gets 413, not a reset connection', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: 64 }])
+    const [slot] = minted.uploads
+    const huge = Buffer.concat([PNG_1PX, Buffer.alloc(2 * 1024 * 1024)])
+    const response = await fetch(slot.uploadUrl, { method: 'PUT', body: huge }).catch((error) => error)
+    assert.equal(response.status, 413, 'the server answers before closing the socket')
+  })
+
+  await check('an unknown link is refused before any body is buffered', async () => {
+    const response = await fetch(h.address.replace('/mcp', '/mcp-files/not-a-real-nonce'), {
+      method: 'PUT',
+      body: Buffer.alloc(1024),
+    })
+    assert.equal(response.status, 410)
+  })
+
+  await check('referencing a minted but unuploaded id says so instead of pretending', async () => {
+    const minted = await mint([{ mediaType: 'image/png' }])
+    await assert.rejects(
+      () => h.call('dsh_run_prompt', { prompt: 'x', fileIds: [minted.uploads[0].fileId], wait: false }),
+      /has not finished uploading/,
+    )
+  })
+
+  await check('three images ride one prompt as three parts', async () => {
+    const minted = await mint([
+      { mediaType: 'image/png' },
+      { mediaType: 'image/png' },
+      { mediaType: 'image/png' },
+    ])
+    for (const slot of minted.uploads) {
+      assert.equal((await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })).status, 200)
+    }
+    await h.call('dsh_run_prompt', { prompt: 'three', fileIds: minted.uploads.map((slot) => slot.fileId), wait: false })
+    const admitted = h.admittedRequests().filter((request) => (request.content ?? []).some((part) => part.type === 'image')).at(-1)
+    assert.equal(admitted.content.filter((part) => part.type === 'image').length, 3)
+  })
 } finally {
   await h.close()
 }

@@ -434,7 +434,7 @@ export function apply(ctx, config = {}) {
   }
 
   const uploadStore = createUploadStore({
-    attachments: ctx.get('attachments'),
+    getAttachments: () => ctx.get('attachments'),
     config,
     logger: log,
   })

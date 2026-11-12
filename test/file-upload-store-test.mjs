@@ -47,7 +47,7 @@ await check('a link stops accepting bytes once its window closes', async () => {
   const { store, advance } = makeStore({ uploadTtlMs: 60_000 })
   const [slot] = store.mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }], { origin: 'http://x' })
   advance(60_001)
-  await assert.rejects(() => store.accept(slot.uploadUrl.split('/').at(-1), PNG_1PX), /expired/)
+  await assert.rejects(async () => store.begin(slot.uploadUrl.split('/').at(-1)), /expired/)
 })
 
 await check('three failed attempts burn the link', async () => {
@@ -55,10 +55,11 @@ await check('three failed attempts burn the link', async () => {
   const [slot] = store.mint([{ mediaType: 'image/png' }], { origin: 'http://x' })
   const nonce = slot.uploadUrl.split('/').at(-1)
   const garbage = Buffer.from('not a png')
-  await assert.rejects(() => store.accept(nonce, garbage), /not image\/png/)
-  await assert.rejects(() => store.accept(nonce, garbage), /not image\/png/)
-  await assert.rejects(() => store.accept(nonce, garbage), /too many failed attempts/)
-  await assert.rejects(() => store.accept(nonce, PNG_1PX), /unknown or expired/, 'even a good upload cannot revive it')
+  const upload = async (bytes) => store.commit(store.begin(nonce), bytes)
+  await assert.rejects(() => upload(garbage), /not image\/png/)
+  await assert.rejects(() => upload(garbage), /not image\/png/)
+  await assert.rejects(() => upload(garbage), /too many failed attempts/)
+  await assert.rejects(async () => store.begin(nonce), /unknown or expired/, 'even a good upload cannot revive it')
 })
 
 await check('a declared digest that does not match is refused', async () => {
@@ -68,13 +69,16 @@ await check('a declared digest that does not match is refused', async () => {
     /sha256 is required/,
   )
   const [slot] = store.mint([{ mediaType: 'image/png', sha256: 'a'.repeat(64) }], { origin: 'http://x' })
-  await assert.rejects(() => store.accept(slot.uploadUrl.split('/').at(-1), PNG_1PX), /do not match the declared sha256/)
+  await assert.rejects(
+    async () => store.commit(store.begin(slot.uploadUrl.split('/').at(-1)), PNG_1PX),
+    /do not match the declared sha256/,
+  )
 })
 
 await check('the stored reference stays usable until its own ttl, then reports unknown', async () => {
   const { store, advance } = makeStore({ fileIdTtlMs: 60_000 })
   const [slot] = store.mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }], { origin: 'http://x' })
-  await store.accept(slot.uploadUrl.split('/').at(-1), PNG_1PX)
+  await store.commit(store.begin(slot.uploadUrl.split('/').at(-1)), PNG_1PX)
   assert.equal(store.resolve(slot.fileId).state, 'stored')
   advance(60_001)
   assert.throws(() => store.resolve(slot.fileId), /unknown fileId/)
@@ -86,7 +90,10 @@ await check('an image whose declared dimensions exceed the ceiling is refused', 
   const bomb = Buffer.from(PNG_1PX)
   bomb.writeUInt32BE(20_000, 16) // width
   bomb.writeUInt32BE(20_000, 20) // height
-  await assert.rejects(() => store.accept(slot.uploadUrl.split('/').at(-1), bomb), /100 MP/)
+  await assert.rejects(
+    async () => store.commit(store.begin(slot.uploadUrl.split('/').at(-1)), bomb),
+    /100 MP/,
+  )
 })
 
 for (const name of checks) process.stdout.write('ok - ' + name + '\n')
