@@ -415,6 +415,40 @@ assert.equal(collectText(unknown).join(''), '来自「s3」·智能体消息', '
 assert.equal(exported.buildOriginLine({ source: { kind: 'user' }, t: tZh }, { byId: {} }), null, 'a typed message renders no header')
 checks.push('an unloaded sender still shows the short id, without a dead click')
 
+// --- the tool-scope rows -------------------------------------------------------
+// The section is the only part of the page that does not save on change, so what
+// it offers depends on the draft: an unsupported Host shows a reason and no
+// controls, and "global" leaves the workspace switches out of the tree entirely.
+const tScope = (key) => ({
+  scopeLabel: '工具作用域', scopeHint: '哪些工作区可见', scopeGlobal: '全局', scopeSelected: '仅选定工作区',
+  scopeWorkspaces: '工作区', scopeEmpty: '没有所属工作区的会话一律看不见。', scopeSave: '保存', scopeReset: '重置',
+  scopeDirty: '有未保存的改动', scopeUnsupported: '当前 Harness 不提供工作区注册表，作用域不可用。',
+  loading: '读取中',
+}[key] ?? key)
+const scopeHandlers = { onMode: () => {}, onToggle: () => {}, onSave: () => {}, onReset: () => {}, dirty: false }
+const docOf = (extra) => ({ supported: true, mode: 'global', workspaceIds: [], notes: [], workspaces: [{ id: 'ws_a', title: 'hermes', path: '/repo/hermes' }], ...extra })
+
+const unsupportedRows = exported.scopeRow(tScope, docOf({ supported: false }), null, [], 'ready', undefined, scopeHandlers)
+assert.equal(unsupportedRows.length, 1, 'an unsupported Host gets one row, not controls')
+assert.match(collectText(unsupportedRows[0]).join(''), /不提供工作区注册表/)
+
+const globalRows = exported.scopeRow(tScope, docOf({}), { mode: 'global', workspaceIds: [] }, [], 'ready', undefined, scopeHandlers)
+assert.equal(globalRows.length, 2, 'global shows the mode row and the save row only')
+assert.ok(!collectText(globalRows).join('').includes('hermes'), 'no workspace entries while global')
+
+const selectedRows = exported.scopeRow(tScope, docOf({ mode: 'selected', workspaceIds: ['ws_a'] }), { mode: 'selected', workspaceIds: ['ws_a'] }, ['ws_a'], 'ready', undefined, scopeHandlers)
+assert.ok(selectedRows.length >= 3, 'a selection adds the workspace row')
+const scopeLabels = []
+const scanForLabels = (node) => {
+  if (!node || typeof node !== 'object') return
+  if (node.props && typeof node.props.label === 'string') scopeLabels.push(node.props.label)
+  const children = node.props && node.props.children
+  for (const child of Array.isArray(children) ? children : [children]) scanForLabels(child)
+}
+for (const rowNode of selectedRows) scanForLabels(rowNode)
+assert.ok(scopeLabels.includes('hermes'), 'the workspace row offers a switch per workspace')
+checks.push('the tool-scope rows follow the draft and refuse to pretend when unsupported')
+
 // --- the settings route's Origin allowlist ------------------------------------
 // A page served from another origin (the usual LAN + reverse-proxy setup) is a
 // different *site* to the browser, so the Origin/Host comparison refuses it. The
