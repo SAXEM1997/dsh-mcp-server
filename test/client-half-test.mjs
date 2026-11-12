@@ -44,7 +44,7 @@ const uiMock = {
   Switch: (props) => ({ type: 'button', props: { role: 'switch', 'aria-checked': props.checked ? 'true' : 'false', 'aria-label': props.label, disabled: props.disabled }, children: [] }),
   SegmentedControl: (props) => ({ type: 'div', props: { role: 'tablist', 'aria-label': props.label }, children: (props.options || []).map((option) => ({ type: 'button', props: { 'aria-pressed': option.value === props.value ? 'true' : 'false', disabled: props.disabled }, children: [option.label] })) }),
   Pill: (props) => ({ type: props.onClick ? 'button' : 'span', props: { 'aria-pressed': props.active ? 'true' : 'false', disabled: props.disabled }, children: [props.children] }),
-  Button: (props) => ({ type: 'button', props: { onClick: props.onClick }, children: [props.children] }),
+  Button: (props) => ({ type: 'button', props: { onClick: props.onClick, disabled: props.disabled, variant: props.variant }, children: [props.children] }),
   // The Harness bubble chassis and Markdown renderer, as the module finds them
   // in a real page: a delivered message reuses both instead of a look-alike.
   UserMessageBubble: (props) => ({ type: 'div', props: { ...props, 'data-bubble': 'harness' }, children: props.children === undefined ? [] : [].concat(props.children) }),
@@ -447,6 +447,31 @@ const scanForLabels = (node) => {
 }
 for (const rowNode of selectedRows) scanForLabels(rowNode)
 assert.ok(scopeLabels.includes('hermes'), 'the workspace row offers a switch per workspace')
+// The section saves on a button, not on change, so the button has to say when
+// there is nothing to save. `disabled` is the only signal the page has.
+const buttonsIn = (rows) => {
+  const found = []
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return
+    // The Harness primitives are function components, so the element keeps the
+    // component as `type` and the props as-is; the disabled flag is on the props.
+    if (node.props && node.props.disabled !== undefined) found.push(node)
+    const children = node.props && node.props.children
+    for (const child of Array.isArray(children) ? children : [children]) walk(child)
+  }
+  for (const row of rows) walk(row)
+  return found
+}
+// Only the save row carries a `variant`; the mode control's own buttons do not
+// disable with the draft, so they are not what this checks.
+const saveRowButtons = (rows) => buttonsIn(rows).filter((button) => button.props.variant !== undefined)
+const cleanButtons = saveRowButtons(exported.scopeRow(tScope, docOf({}), { mode: 'global', workspaceIds: [] }, [], 'ready', undefined, scopeHandlers))
+assert.equal(cleanButtons.length, 2, 'save and reset')
+assert.ok(cleanButtons.every((button) => button.props.disabled === true), 'an untouched draft has nothing to save')
+const dirtyButtons = saveRowButtons(exported.scopeRow(tScope, docOf({}), { mode: 'selected', workspaceIds: [] }, [], 'ready', undefined, { ...scopeHandlers, dirty: true }))
+assert.ok(dirtyButtons.every((button) => button.props.disabled === false), 'a changed draft enables saving')
+checks.push('the save button reports whether there is anything to save')
+
 checks.push('the tool-scope rows follow the draft and refuse to pretend when unsupported')
 
 // --- the settings route's Origin allowlist ------------------------------------

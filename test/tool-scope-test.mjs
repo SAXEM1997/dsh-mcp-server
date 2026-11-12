@@ -61,13 +61,11 @@ function harnessWorld({ workspaces = [], byPath = {} } = {}) {
         return list.find((workspace) => workspace.path === wanted)
       },
     },
-    workingDirectory: {
-      get: (session) => session?.cwd,
-    },
   }
 }
 
-const agentOf = (sessionId, cwd) => ({ id: `agent-${sessionId}`, session: { id: sessionId, cwd } })
+/** A session as the Harness hands it over: the directory it was opened in is in the header. */
+const agentOf = (sessionId, cwd) => ({ id: `agent-${sessionId}`, session: { id: sessionId, header: { cwd } } })
 
 // --- the document ------------------------------------------------------------
 
@@ -148,14 +146,14 @@ await check('an unreadable document selects nobody and reports it', async () => 
 })
 
 await check('a Harness without a workspace registry says so instead of guessing', async () => {
-  const scope = createToolScope({ registry: undefined, workingDirectory: undefined, store: memoryStore(undefined) })
+  const scope = createToolScope({ registry: undefined, store: memoryStore(undefined) })
   assert.equal(scope.supported, false)
   // Global needs no registry: it was the behaviour before this feature existed.
   assert.equal(await scope.visibleFor(agentOf('s1', '/repo/hermes')), true)
   assert.ok((await scope.state()).notes.includes('scope-unsupported'))
   // The moment a selection is involved, the missing registry means nobody.
   const selected = memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] }))
-  const narrowed = createToolScope({ registry: undefined, workingDirectory: undefined, store: selected })
+  const narrowed = createToolScope({ registry: undefined, store: selected })
   assert.equal(await narrowed.visibleFor(agentOf('s1', '/repo/hermes')), false)
 })
 
@@ -238,7 +236,7 @@ await check('changing directory mid-session does not move the session between wo
   })
   let live = '/repo/a'
   const agent = { id: 'a', session: { id: 's1', header: { cwd: '/repo/a' } } }
-  const scope = createToolScope({ ...world, workingDirectory: { get: () => live }, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
+  const scope = createToolScope({ ...world, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
   assert.equal(await scope.visibleFor(agent), true, 'opened inside the selected workspace')
   live = '/repo/b'
   assert.equal(await scope.visibleFor(agent), true, 'a cd must not move the session out of it either')
@@ -249,7 +247,7 @@ await check('a session cannot cd its way into a selected workspace', async () =>
   let live = '/somewhere/else'
   // The identity is where it was opened; the live directory is the attack.
   const agent = { id: 'a', session: { id: 's1', header: { cwd: '/somewhere/else' } } }
-  const scope = createToolScope({ ...world, workingDirectory: { get: () => live }, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
+  const scope = createToolScope({ ...world, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
   assert.equal(await scope.visibleFor(agent), false)
   live = '/repo/a'
   assert.equal(await scope.visibleFor(agent), false, 'tools are not a reward for cd')

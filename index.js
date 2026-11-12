@@ -452,7 +452,6 @@ export function apply(ctx, config = {}) {
   // swap the registrations a running step already snapshotted.
   const toolScope = createToolScope({
     registry: typeof ctx?.get === 'function' ? ctx.get('workspaceRegistry') : undefined,
-    workingDirectory: typeof ctx?.get === 'function' ? ctx.get('workingDirectory') : undefined,
     store: createFileStore(
       typeof config.toolScopeFile === 'string' && config.toolScopeFile
         ? resolve(config.toolScopeFile)
