@@ -804,7 +804,9 @@ export async function createPluginHarness(options = {}) {
   const routes = webServer.registered
   const mcpRoute = routes.find((entry) => entry.path === '/mcp')
   const configRoute = routes.find((entry) => entry.path === '/mcp-config')
-  assert.equal(routes.length, 3, 'the plugin registers the MCP route, its configuration route and the upload route')
+  const scopeRoute = routes.find((entry) => entry.path === '/mcp-scope')
+  assert.equal(routes.length, 4, 'the plugin registers the MCP route, its configuration route, the upload route and the scope route')
+  assert.equal(scopeRoute?.kind, 'exact', 'the scope route answers one fixed path')
   assert.equal(mcpRoute.kind, 'exact')
   assert.equal(configRoute.kind, 'exact')
   const uploadRoute = routes.find((entry) => entry.path === '/mcp-files')
@@ -814,6 +816,7 @@ export async function createPluginHarness(options = {}) {
   const origin = 'http://127.0.0.1:' + server.address().port
   const address = origin + '/mcp'
   const configUrl = origin + '/mcp-config'
+  const scopeUrl = origin + '/mcp-scope'
 
   let id = 0
   const nextId = () => ++id
@@ -876,6 +879,7 @@ export async function createPluginHarness(options = {}) {
     server,
     address,
     configUrl,
+    scopeUrl,
     nextId,
     rpc,
     call,

@@ -29,6 +29,7 @@ import { McpGateway, SERVER_NAME } from './lib/protocol.js'
 import { registerDshTools } from './lib/dsh-tools-bridge.js'
 import { groupOwnedSessions } from './lib/workspace-grouping.js'
 import { createFileStore, createToolScope } from './lib/tool-scope.js'
+import { createScopeHandler } from './lib/scope-route.js'
 import { errorText, sessionIdOf } from './lib/dsh-contracts.js'
 
 /** Keep in sync with package.json; reported through `initialize`. */
@@ -822,6 +823,21 @@ export function apply(ctx, config = {}) {
     return patch
   }
 
+  const disposeScopeRoute = exposeToDshPage
+    ? ctx.webServer.register({
+      kind: 'exact',
+      path: `${configPath.replace(/\/mcp-config$/, '')}/mcp-scope`,
+      handler: createScopeHandler({
+        scope: toolScope,
+        registry: typeof ctx.get === 'function' ? ctx.get('workspaceRegistry') : undefined,
+        trust: configTrust,
+        allowedOrigins: allowedConfigOrigins,
+        maxBodyBytes: configMaxBodyBytes,
+        logger: log,
+      }),
+    })
+    : undefined
+
   const disposeConfigRoute = exposeToDshPage
     ? ctx.webServer.register({
       kind: 'exact',
@@ -1000,6 +1016,7 @@ export function apply(ctx, config = {}) {
     }
     try {
       disposeConfigRoute?.()
+      disposeScopeRoute?.()
     } catch (error) {
       log('debug', 'configuration route disposal failed', { error: error instanceof Error ? error.message : String(error) })
     }
