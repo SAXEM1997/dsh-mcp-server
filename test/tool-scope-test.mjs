@@ -253,6 +253,42 @@ await check('a session cannot cd its way into a selected workspace', async () =>
   assert.equal(await scope.visibleFor(agent), false, 'tools are not a reward for cd')
 })
 
+await check('a read that never returns still answers, after the deadline', async () => {
+  const registry = { list: () => [], resolveByPath: async () => undefined }
+  const scope = createToolScope({ registry, store: { read: () => new Promise(() => {}), write: () => {} } })
+  const started = Date.now()
+  // `when` is awaited once per tool per step: hanging here would hang the step.
+  const verdict = await Promise.race([
+    scope.visibleFor({ id: 'a', session: { id: 's1', header: { cwd: '/repo/a' } } }),
+    new Promise((resolve) => setTimeout(() => resolve('HANG'), 4000)),
+  ])
+  assert.equal(verdict, false)
+  assert.ok(Date.now() - started < 3500, 'and it answers on the deadline, not on the read')
+})
+
+await check('a read that lands after the deadline cannot un-narrow the scope', async () => {
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const registry = { list: () => [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }], resolveByPath: async () => ({ id: 'ws_a' }) }
+  const scope = createToolScope({ registry, store: { read: async () => { await gate; return JSON.stringify({ mode: 'global' }) }, write: () => {} } })
+  const agent = { id: 'a', session: { id: 's1', header: { cwd: '/repo/a' } } }
+  assert.equal(await scope.visibleFor(agent), false, 'the deadline narrowed it')
+  release()
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.equal((await scope.state()).mode, 'selected', 'the late document did not win')
+})
+
+await check('a workspace created a moment ago can be saved into', async () => {
+  const registry = { list: () => [], resolveByPath: async () => undefined }
+  let written
+  const scope = createToolScope({ registry, store: { read: undefined, write: (text) => { written = text } } })
+  // Fill the listing cache with the empty world first.
+  await scope.visibleFor({ id: 'a', session: { id: 's1', header: { cwd: '/repo/a' } } })
+  registry.list = () => [{ id: 'ws_new', path: '/repo/new', sessionIds: [] }]
+  await scope.save({ mode: 'selected', workspaceIds: ['ws_new'] })
+  assert.match(String(written), /ws_new/, 'validation reads through the cache, so a new workspace is savable')
+})
+
 // --- summary -----------------------------------------------------------------
 
 console.log(`\n${passed} tool-scope checks passed, ${failures.length} failed`)

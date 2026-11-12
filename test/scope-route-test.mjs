@@ -159,6 +159,19 @@ await check('a method other than GET/HEAD/POST is refused with the allowed list'
   })
 })
 
+await check('an oversized body is a 413 with JSON, not a dropped connection', async () => {
+  const scope = fakeScope()
+  await withServer({ scope, maxBodyBytes: 1024 }, async (base) => {
+    const response = await fetch(base, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'global', filler: 'x'.repeat(4000) }),
+    })
+    assert.equal(response.status, 413)
+    assert.equal((await response.json()).code, 'BODY_TOO_LARGE')
+  })
+})
+
 await check('the allowlist relaxes only the Origin/Host comparison', async () => {
   const scope = fakeScope()
   // The real `configTrust` for a browser request: Origin must match Host.
