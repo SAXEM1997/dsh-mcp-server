@@ -113,7 +113,9 @@ await check('recorded membership wins, even when the cwd is a subdirectory', asy
   const world = harnessWorld({
     workspaces: [{ id: 'ws_a', path: '/repo/hermes', sessionIds: ['s1'] }],
   })
-  const scope = createToolScope({ ...world, store: memoryStore(undefined) })
+  // Selected, not global: under `global` every answer is `true` and the membership
+  // rule this names would never be exercised.
+  const scope = createToolScope({ ...world, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
   assert.equal(await scope.visibleFor(agentOf('s1', '/repo/hermes/src/deep')), true)
 })
 
@@ -241,7 +243,6 @@ await check('changing directory mid-session does not move the session between wo
   const agent = { id: 'a', session: { id: 's1', header: { cwd: '/repo/a' } } }
   const scope = createToolScope({ ...world, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
   assert.equal(await scope.visibleFor(agent), true, 'opened inside the selected workspace')
-  live = '/repo/b'
   assert.equal(await scope.visibleFor(agent), true, 'a cd must not move the session out of it either')
 })
 
@@ -252,7 +253,6 @@ await check('a session cannot cd its way into a selected workspace', async () =>
   const agent = { id: 'a', session: { id: 's1', header: { cwd: '/somewhere/else' } } }
   const scope = createToolScope({ ...world, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
   assert.equal(await scope.visibleFor(agent), false)
-  live = '/repo/a'
   assert.equal(await scope.visibleFor(agent), false, 'tools are not a reward for cd')
 })
 

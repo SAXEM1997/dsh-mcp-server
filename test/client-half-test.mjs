@@ -428,15 +428,15 @@ const tScope = (key) => ({
 const scopeHandlers = { onMode: () => {}, onToggle: () => {}, onSave: () => {}, onReset: () => {}, dirty: false }
 const docOf = (extra) => ({ supported: true, mode: 'global', workspaceIds: [], notes: [], workspaces: [{ id: 'ws_a', title: 'hermes', path: '/repo/hermes' }], ...extra })
 
-const unsupportedRows = exported.scopeRow(tScope, docOf({ supported: false }), null, [], 'ready', undefined, scopeHandlers)
+const unsupportedRows = exported.scopeRow(tScope, docOf({ supported: false }), null, 'ready', undefined, scopeHandlers)
 assert.equal(unsupportedRows.length, 1, 'an unsupported Host gets one row, not controls')
 assert.match(collectText(unsupportedRows[0]).join(''), /不提供工作区注册表/)
 
-const globalRows = exported.scopeRow(tScope, docOf({}), { mode: 'global', workspaceIds: [] }, [], 'ready', undefined, scopeHandlers)
+const globalRows = exported.scopeRow(tScope, docOf({}), { mode: 'global', workspaceIds: [] }, 'ready', undefined, scopeHandlers)
 assert.equal(globalRows.length, 2, 'global shows the mode row and the save row only')
 assert.ok(!collectText(globalRows).join('').includes('hermes'), 'no workspace entries while global')
 
-const selectedRows = exported.scopeRow(tScope, docOf({ mode: 'selected', workspaceIds: ['ws_a'] }), { mode: 'selected', workspaceIds: ['ws_a'] }, ['ws_a'], 'ready', undefined, scopeHandlers)
+const selectedRows = exported.scopeRow(tScope, docOf({ mode: 'selected', workspaceIds: ['ws_a'] }), { mode: 'selected', workspaceIds: ['ws_a'] }, 'ready', undefined, scopeHandlers)
 assert.ok(selectedRows.length >= 3, 'a selection adds the workspace row')
 const scopeLabels = []
 const scanForLabels = (node) => {
@@ -465,14 +465,14 @@ const buttonsIn = (rows) => {
 // Only the save row carries a `variant`; the mode control's own buttons do not
 // disable with the draft, so they are not what this checks.
 const saveRowButtons = (rows) => buttonsIn(rows).filter((button) => button.props.variant !== undefined)
-const cleanButtons = saveRowButtons(exported.scopeRow(tScope, docOf({}), { mode: 'global', workspaceIds: [] }, [], 'ready', undefined, scopeHandlers))
+const cleanButtons = saveRowButtons(exported.scopeRow(tScope, docOf({}), { mode: 'global', workspaceIds: [] }, 'ready', undefined, scopeHandlers))
 assert.equal(cleanButtons.length, 2, 'save and reset')
 assert.ok(cleanButtons.every((button) => button.props.disabled === true), 'an untouched draft has nothing to save')
-const dirtyButtons = saveRowButtons(exported.scopeRow(tScope, docOf({}), { mode: 'selected', workspaceIds: [] }, [], 'ready', undefined, { ...scopeHandlers, dirty: true }))
+const dirtyButtons = saveRowButtons(exported.scopeRow(tScope, docOf({}), { mode: 'selected', workspaceIds: [] }, 'ready', undefined, { ...scopeHandlers, dirty: true }))
 assert.ok(dirtyButtons.every((button) => button.props.disabled === false), 'a changed draft enables saving')
 // A failed first read has no document to render; the row must still say so
 // instead of sitting on "loading" forever.
-const failedRows = exported.scopeRow(tScope, null, null, [], 'error', 'network down', scopeHandlers)
+const failedRows = exported.scopeRow(tScope, null, null, 'error', 'network down', scopeHandlers)
 assert.match(collectText(failedRows).join(''), /network down/)
 
 checks.push('the save button reports whether there is anything to save')

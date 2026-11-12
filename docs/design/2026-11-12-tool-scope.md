@@ -142,7 +142,19 @@ body: { mode: "global" | "selected", workspaceIds: ["ws_ab12"] }
 响应形状与现有路由一致：`{ error: "<message>", code?: "<code>" }`（现有 `/mcp-config` 只回 `error`，
 这里多给一个稳定的 `code`，不改变既有路由的形状）。
 
-**不做 revision 乐观并发**：单机单页面的开关，不是多人编辑的文档。
+**做最小并发保护（2026-11-12 实现后补记）**：原计划不做，实现时发现两条真实路径会互相覆盖——
+
+- 插件重载：旧实例晚到的 `save` 会把新实例刚收紧的选择覆盖回旧值，**重启后静默放大可见性**；
+- 两个进程/两个页面同时打开：后写者无条件覆盖前者。
+
+因此加了两道，都是**写入时**才比较，不加版本号字段：
+
+| 场景 | 行为 |
+|---|---|
+| 本实例已被 `dispose()`（插件被替换） | `409 scope-disposed` |
+| 盘上 `updatedAt` 与本实例最后读到的不一致 | `409 scope-conflict`（页面提示刷新后重试） |
+
+代价：多一次读盘（几百字节）与一个 `updatedAt` 字段；不改文档格式版本。
 
 ## 5. 页面
 
@@ -163,7 +175,7 @@ body: { mode: "global" | "selected", workspaceIds: ["ws_ab12"] }
 └────────────────────────────────────────────┘
 ```
 
-- 工作区行显示 `title`，鼠标悬停给 `path`（`path` 只在 trust 通过时随 GET 返回）。
+- 工作区行显示 `title`，鼠标悬停给 `path`（整条路由都过 loopback + trust，`path` 直接随 GET 返回）。
 - 保存成功后直接用 POST 的返回值刷新，不重读、不等待重载。
 - `supported: false` 时整节只显示原因，不给可点控件。
 
@@ -192,7 +204,10 @@ scope: {
 | 405 | — | 非 GET/POST |
 | 413 | — | 请求体超限（复用现有上限） |
 | 415 | — | `content-type` 不是 JSON |
+| 409 | `scope-disposed` | 本实例已被替换（插件重载），拒绝写入 |
+| 409 | `scope-conflict` | 盘上文档已被别处改动，拒绝覆盖 |
 | 500 | `scope-write-failed` | 写文件失败，内存保持旧值 |
+| 500 | `scope-registry-unavailable` | 注册表抛错（不是「没有工作区」） |
 | 501 | `scope-unsupported` | Host 无 `workspaceRegistry` |
 | 403 | — | 非 loopback / Origin 不在白名单（沿用现有） |
 
