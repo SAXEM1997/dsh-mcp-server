@@ -180,5 +180,12 @@ await check('file ids stay with the caller that minted them when restrictToOwner
   assert.throws(() => store.resolve(slot.fileId, {}), /unknown fileId/, 'an anonymous caller cannot reach a named upload')
 })
 
+await check('a full batch of undeclared images still mints', async () => {
+  const { store } = makeStore({ uploadMaxFiles: 10 })
+  const minted = store.mint(Array.from({ length: 10 }, () => ({ mediaType: 'image/png' })), { origin: 'http://x' })
+  assert.equal(minted.length, 10, 'the per-mint cap counts declared sizes, not the default ceiling')
+  assert.equal(minted[0].maxBytes, 20 * 1024 * 1024, 'each slot still allows the full per-file ceiling')
+})
+
 for (const name of checks) process.stdout.write('ok - ' + name + '\n')
 process.stdout.write('\n' + checks.length + ' upload-store checks passed\n')

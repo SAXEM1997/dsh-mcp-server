@@ -13,6 +13,7 @@
 > ⑧ `restrictToOwner` 打开时，`fileId` 绑定铸造它的调用方；别人的 id 一律按「unknown fileId」处理。
 > ⑨ 上传路由对非 PUT 回 405；`maxEdge` 夹在 [64,4096]，`readImageRequest` 的 `maxBytes` 固定 8 MiB。
 > ⑩ `content-type` 不符也计入尝试预算（否则可无限探测）；过期与不存在的链接回同一句话，避免探测 nonce 是否存在。
+> ⑪ 每次铸造的字节上限只统计**声明过**的 `expectedBytes`；未声明者按「单文件上限」占槽但不算进这笔账，否则默认配置下 4 张图就会被拒。
 
 ## 1. 问题
 
