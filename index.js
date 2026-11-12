@@ -28,6 +28,7 @@ import { createQuestionBroker } from './lib/questions.js'
 import { McpGateway, SERVER_NAME } from './lib/protocol.js'
 import { registerDshTools } from './lib/dsh-tools-bridge.js'
 import { groupOwnedSessions } from './lib/workspace-grouping.js'
+import { createFileStore, createToolScope } from './lib/tool-scope.js'
 import { errorText, sessionIdOf } from './lib/dsh-contracts.js'
 
 /** Keep in sync with package.json; reported through `initialize`. */
@@ -440,6 +441,20 @@ export function apply(ctx, config = {}) {
   })
 
 
+  // The tool scope lives in its own sidecar rather than in cordis.patch.yml:
+  // saving a setting through the config editor reloads this plugin, which would
+  // swap the registrations a running step already snapshotted.
+  const toolScope = createToolScope({
+    registry: typeof ctx?.get === 'function' ? ctx.get('workspaceRegistry') : undefined,
+    workingDirectory: typeof ctx?.get === 'function' ? ctx.get('workingDirectory') : undefined,
+    store: createFileStore(
+      typeof config.toolScopeFile === 'string' && config.toolScopeFile
+        ? resolve(config.toolScopeFile)
+        : join(dshHome, 'mcp', 'tool-scope.json'),
+    ),
+    logger: log,
+  })
+
   const capabilities = createDshCapabilities(ctx, {
     logger: log,
     sessionOwners: clients,
@@ -464,6 +479,7 @@ export function apply(ctx, config = {}) {
     busyMode,
     configPreset,
     uploadStore,
+    toolScope,
     openSession: queueOpenSession,
     syncStatus: () => workSyncStatus(),
     questions,
