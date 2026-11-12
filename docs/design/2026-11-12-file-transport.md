@@ -58,7 +58,7 @@
 ① dsh_prepare_upload({files:[{name?, mediaType, bytes?}]})
      → {uploads:[{fileId, uploadUrl, method:"PUT", expiresAt, maxBytes}]}
 
-② 客户端 PUT 字节到 uploadUrl              ← 不带任何 header 也合法
+② 客户端 PUT 字节到 uploadUrl              ← 不需要鉴权头，只需 content-type
      200 → {fileId, bytes, sha256, mediaType}
 
 ③ dsh_run_prompt(prompt, fileIds:[...])     ← 插件把图片挂进消息 parts
@@ -112,11 +112,15 @@ dsh_read_attachment(sessionId, seq, maxEdge?) → content:[{type:"image", data, 
 
 ### 5.2 `PUT <uploadUrl>`
 
-- 请求体 = 原始字节；`content-type` 必须匹配铸造时声明的 `mediaType`（不匹配 415，**槽位不消耗**）。
+- 请求体 = 原始字节。
+- `content-type`：**可省略**（`curl -T` 默认发 `application/octet-stream`，按「未声明」处理，
+  以铸造时声明的 `mediaType` 为准）；但如果显式给了具体类型且与声明不符，返回 `415`
+  （**槽位不消耗**）。这样 `curl -T` 与带类型的 `fetch` 都能直接用。
 - 成功 `200`，返回 `{fileId, bytes, sha256, mediaType}`。
 - **幂等重试**：首次成功之前，同一 URL 可以重复 PUT（网络中断、超时都不消耗槽位）；
   首次成功后该 URL 立即失效，再 PUT 返回 `409 already uploaded`。
-- 超过 `maxBytes` → `413`（槽位不消耗，可用更小的文件重试）。
+- 单槽上限 = `min(铸造时声明的 bytes, uploadMaxFileBytes)`；声明与实际不符时以较小的为准。
+  超过 → `413`（槽位不消耗，可用更小的文件重试）。
 - 过期 → `410 expired`，客户端应重新 `dsh_prepare_upload`。
 
 > **关于「单次」的含义**：这里的单次是「单次**成功**」。失败重试不消耗槽位——这是对网络
@@ -192,7 +196,7 @@ origin = clientBaseUrl（若本次调用显式传入）
 
 | 码 | 场景 |
 |---|---|
-| `400` | multipart 结构坏了 / 缺 `files` |
+| `400` | `files` 缺失、为空、超过 `uploadMaxFiles`，或字段类型不对 |
 | `401` | `dsh_prepare_upload` 走 MCP 通道时的常规鉴权失败 |
 | `404` | `fileId` 未知或已过期（`dsh_run_prompt`） |
 | `409` | 该 nonce 已成功上传过 |
@@ -214,7 +218,7 @@ origin = clientBaseUrl（若本次调用显式传入）
 
 | 层 | 用例 |
 |---|---|
-| 单元 | nonce 生命周期（铸造/成功/重试不消耗/过期/超额/类型不符）；`fileId` 映射 TTL；origin 推导三种来源；multipart 解析（Node 24 的 `Response.formData`） |
+| 单元 | nonce 生命周期（铸造/成功/重试不消耗/过期/超额/类型不符）；`fileId` 映射 TTL；origin 推导三种来源；PUT 的 content-type 规则（省略/octet-stream/不符） |
 | 集成 | 假客户端 `curl -T` 全流程；`dsh_run_prompt` 带 1/3/4 张图；未知 id 报 404 |
 | 协议 | 工具数 26 → 28；`initialize` 的 `_meta` 含 `upload` 描述；`tools/list` schema 校验 |
 | 文档 | `docs/{zh,en}/tools.md` 新增两节，`check:docs` 通过 |
@@ -234,5 +238,4 @@ T3 与 T1 可并行。
 
 - nonce 的编码格式（不透明串 vs 带版本前缀）——不影响契约。
 - 上传字节先在内存聚合还是流式落临时文件——20 MiB 上限下内存聚合更简单。
-- `dsh_status` 里是否也暴露一个 `upload` 摘要（我倾向只暴露 `enabled` 与限额，不暴露地址）。
 - 速率上限的实现形态（令牌桶 vs 固定窗口）。
