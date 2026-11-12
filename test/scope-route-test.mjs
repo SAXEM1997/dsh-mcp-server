@@ -159,6 +159,15 @@ await check('a method other than GET/HEAD/POST is refused with the allowed list'
   })
 })
 
+await check('a failing scope answers 500 instead of hanging the request', async () => {
+  const scope = { ...fakeScope(), state: async () => { throw new Error('boom') } }
+  await withServer({ scope }, async (base) => {
+    const response = await fetch(base)
+    assert.equal(response.status, 500)
+    assert.equal((await response.json()).code, 'scope-failed')
+  })
+})
+
 await check('an oversized body is a 413 with JSON, not a dropped connection', async () => {
   const scope = fakeScope()
   await withServer({ scope, maxBodyBytes: 1024 }, async (base) => {

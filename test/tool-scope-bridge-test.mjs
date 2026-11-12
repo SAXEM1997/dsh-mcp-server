@@ -123,6 +123,31 @@ await check('an admitted workspace still opens tools, and the scoped registratio
   assert.equal(typeof agentTools.rows[0].options?.when, 'function', 'an opened tool must carry the same predicate')
 })
 
+await check('a registration that throws is reported as opened-nothing, and retried next time', async () => {
+  const scope = { visibleFor: async () => true }
+  const { open } = await metaScopeWith(scope)
+  let fail = true
+  const broken = {
+    rows: [],
+    register(definition) {
+      if (fail) throw new Error('registry refused')
+      this.rows.push({ definition })
+      return () => {}
+    },
+    get() {
+      return undefined
+    },
+  }
+  const agent = { id: 'a', ctx: { tools: broken } }
+  const first = await open.definition.execute({ tools: ['dsh_status'] }, { agent })
+  // Claiming success here would make `alreadyOpen` refuse to retry forever.
+  assert.deepEqual(first.opened, [])
+  fail = false
+  const second = await open.definition.execute({ tools: ['dsh_status'] }, { agent })
+  assert.deepEqual(second.opened, ['dsh_status'])
+  assert.deepEqual(second.alreadyOpen, [])
+})
+
 // --- summary ----------------------------------------------------------------
 
 console.log(`\n${passed} tool-scope-bridge checks passed, ${failures.length} failed`)

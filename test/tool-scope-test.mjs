@@ -266,7 +266,7 @@ await check('a read that never returns still answers, after the deadline', async
   assert.ok(Date.now() - started < 3500, 'and it answers on the deadline, not on the read')
 })
 
-await check('a read that lands after the deadline cannot un-narrow the scope', async () => {
+await check('a read that lands after the deadline still becomes the document', async () => {
   let release
   const gate = new Promise((resolve) => { release = resolve })
   const registry = { list: () => [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }], resolveByPath: async () => ({ id: 'ws_a' }) }
@@ -275,7 +275,30 @@ await check('a read that lands after the deadline cannot un-narrow the scope', a
   assert.equal(await scope.visibleFor(agent), false, 'the deadline narrowed it')
   release()
   await new Promise((resolve) => setTimeout(resolve, 200))
-  assert.equal((await scope.state()).mode, 'selected', 'the late document did not win')
+  // Nobody saved meanwhile, so the late answer is still the best document there
+  // is: keeping the narrowing would strand the process at "nobody" for its whole life.
+  assert.equal((await scope.state()).mode, 'global', 'the late document was adopted')
+  assert.equal(await scope.visibleFor(agent), true)
+})
+
+await check('a late document cannot overwrite a save that already landed', async () => {
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const registry = { list: () => [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }], resolveByPath: async () => ({ id: 'ws_a' }) }
+  const scope = createToolScope({ registry, store: { read: async () => { await gate; return JSON.stringify({ mode: 'global' }) }, write: () => {} } })
+  const agent = { id: 'a', session: { id: 's1', header: { cwd: '/repo/a' } } }
+  assert.equal(await scope.visibleFor(agent), false, 'narrowed at the deadline')
+  await scope.save({ mode: 'selected', workspaceIds: [] }) // a real save, so the read is superseded
+  release()
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  assert.equal((await scope.state()).mode, 'selected', 'the save wins over the stale read')
+})
+
+await check('a registry that throws is an error, not an empty registry', async () => {
+  const registry = { list: () => { throw new Error('registry down') }, resolveByPath: async () => undefined }
+  const scope = createToolScope({ registry, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
+  await assert.rejects(() => scope.save({ mode: 'selected', workspaceIds: ['ws_a'] }), /scope-registry-unavailable/)
+  assert.equal(await scope.visibleFor({ id: 'a', session: { id: 's1', header: { cwd: '/repo/a' } } }), false, 'a judgement fails closed')
 })
 
 await check('a workspace created a moment ago can be saved into', async () => {
