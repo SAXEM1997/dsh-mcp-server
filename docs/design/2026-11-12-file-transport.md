@@ -5,7 +5,8 @@
 > **实现期修订（v4，2026-11-12）**：① `_meta` 的命名空间键用 `dsh-mcp-server`（`SERVER_NAME` 常量，
 > `lib/protocol.js:44`），不是本文早先写的 `dsh-mcp-btwy`；② `trustedProxies`（IP 名单）改为
 > `trustProxyHeaders`（布尔开关）——插件里 `peer` 只有 `'token'`/`'connection'` 两个符号值，
-> 拿不到对端地址，见 §5.7；③ 槽位限流按**槽位数**计（一次铸造 N 个算 N 次），不是按调用次数。
+> 拿不到对端地址，见 §5.7；③ 槽位限流按**槽位数**计（一次铸造 N 个算 N 次），不是按调用次数；
+> ④ `dsh_read_attachment` 增加可选 `index`——`seq` 只定位事件，而一个事件可能带多张图。
 
 ## 1. 问题
 
