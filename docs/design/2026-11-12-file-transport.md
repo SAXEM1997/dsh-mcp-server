@@ -259,6 +259,10 @@ origin = clientBaseUrl（若本次调用传了）
 `lib/protocol.js:242` `callTool(name, args, context)`），只需给 `context` 加 `origin` 字段。
 
 `clientBaseUrl` 只覆盖**本次调用**，不落库；`origin` 同样只在响应里回声，不参与鉴权。
+
+**兜底按 `http://`**：没有 `X-Forwarded-Proto` 时，`Host` 之外的协议信息不存在，只能假定明文。
+TLS 终止在反代且不设转发头的部署，要么打开 `trustProxyHeaders` 并让反代补头，要么用
+`clientBaseUrl` 显式指定——这两种情况都有明确出口，所以这里不猜 `https`。
 （它存在的唯一理由：反代改写了 `Host` 又没设 `X-Forwarded-*` 时，服务端无从得知外部地址。）
 
 ### 5.8 `initialize._meta` 与 `dsh_status`

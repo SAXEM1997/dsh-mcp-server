@@ -120,5 +120,15 @@ await check('repeated attempts on one link are rate limited', async () => {
   assert.throws(() => store.begin(nonce), /too many upload attempts/)
 })
 
+await check('a claimed slot is reclaimed if the upload never finishes', async () => {
+  const { store, advance } = makeStore({ uploadTtlMs: 60_000 })
+  const [slot] = store.mint([{ mediaType: 'image/png', expectedBytes: 1024 }], { origin: 'http://x' })
+  const claimed = store.begin(slot.uploadUrl.split('/').at(-1))
+  assert.equal(claimed.state, 'consuming')
+  advance(60_001 + 60_001) // past the deadline and past the grace period
+  store.release(claimed)
+  assert.throws(() => store.begin(slot.uploadUrl.split('/').at(-1)), /unknown or expired/)
+})
+
 for (const name of checks) process.stdout.write('ok - ' + name + '\n')
 process.stdout.write('\n' + checks.length + ' upload-store checks passed\n')
