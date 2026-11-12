@@ -287,8 +287,11 @@ await check('a read that lands after the deadline still becomes the document', a
 await check('a late document cannot overwrite a save that already landed', async () => {
   let release
   const gate = new Promise((resolve) => { release = resolve })
+  let first = true
   const registry = { list: () => [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }], resolveByPath: async () => ({ id: 'ws_a' }) }
-  const scope = createToolScope({ registry, store: { read: async () => { await gate; return JSON.stringify({ mode: 'global' }) }, write: () => {} } })
+  // Only the first read hangs; the save's own verification read has to answer.
+  const store = { read: async () => { if (first) { first = false; await gate }; return JSON.stringify({ mode: 'global' }) }, write: () => {} }
+  const scope = createToolScope({ registry, store })
   const agent = { id: 'a', session: { id: 's1', header: { cwd: '/repo/a' } } }
   assert.equal(await scope.visibleFor(agent), false, 'narrowed at the deadline')
   await scope.save({ mode: 'selected', workspaceIds: [] }) // a real save, so the read is superseded
@@ -368,6 +371,35 @@ await check('a save built on a stale read is refused instead of overwriting', as
   // `a` never saw that write; letting it through would widen a tightened scope.
   await assert.rejects(() => a.save({ mode: 'global' }), /scope-conflict/)
   assert.equal(JSON.parse(await readFile(file, 'utf8')).mode, 'selected')
+})
+
+await check('a conflict is not permanent: the next save compares against the new baseline', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scope-conflict-'))
+  const file = join(dir, 'tool-scope.json')
+  const store = { read: async () => { try { return await readFile(file, 'utf8') } catch { return undefined } }, write: (text) => writeFile(file, text) }
+  const registry = { list: () => [{ id: 'ws_0', path: '/r0', sessionIds: [] }, { id: 'ws_1', path: '/r1', sessionIds: [] }], resolveByPath: async () => undefined }
+  const a = createToolScope({ registry, store })
+  await a.ready
+  await a.save({ mode: 'global' })
+  const b = createToolScope({ registry, store })
+  await b.ready
+  await b.save({ mode: 'selected', workspaceIds: ['ws_0'] })
+  await assert.rejects(() => a.save({ mode: 'global' }), /scope-conflict/)
+  // Without refreshing the baseline this would 409 forever and only a restart would
+  // clear it.
+  await a.save({ mode: 'global' })
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).mode, 'global')
+})
+
+await check('an existing document this instance never read is a conflict, not a blind overwrite', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scope-blind-'))
+  const file = join(dir, 'tool-scope.json')
+  await writeFile(file, JSON.stringify({ version: 1, mode: 'selected', workspaceIds: ['ws_0'], updatedAt: '2026-01-01T00:00:00.000Z' }))
+  const store = { read: async () => { throw new Error('unreadable on first pass') }, write: (text) => writeFile(file, text) }
+  const registry = { list: () => [{ id: 'ws_0', path: '/r0', sessionIds: [] }], resolveByPath: async () => undefined }
+  const scope = createToolScope({ registry, store })
+  await assert.rejects(() => scope.save({ mode: 'global' }), /scope-write-unverified/)
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).mode, 'selected', 'nothing was written')
 })
 
 // --- summary -----------------------------------------------------------------

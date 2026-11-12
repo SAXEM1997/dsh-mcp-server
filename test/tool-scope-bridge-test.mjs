@@ -148,6 +148,35 @@ await check('a registration that throws is reported as opened-nothing, and retri
   assert.deepEqual(second.alreadyOpen, [])
 })
 
+await check('what the registry refused is not reported as registered', async () => {
+  const tools = {
+    rows: [],
+    register(definition) {
+      if (definition.name === 'dsh_status') throw new Error('name taken')
+      this.rows.push({ definition })
+      return () => {}
+    },
+    get() {
+      return undefined
+    },
+  }
+  const registered = registerDshTools({ ctx: contextWith(tools), capabilities: CAPABILITIES, mode: 'full', scope: { visibleFor: async () => true } })
+  assert.ok(registered.requested.includes('dsh_status'), 'the request is reported separately')
+  assert.ok(!registered.names.includes('dsh_status'), 'the refusal is not claimed as registered')
+  assert.deepEqual(registered.names, registered.requested.filter((name) => name !== 'dsh_status'))
+})
+
+await check('an inject that never answers reports nothing registered', async () => {
+  const context = {
+    get: () => undefined,
+    // A service that never appears: the callback is simply never called.
+    inject: () => {},
+  }
+  const registered = registerDshTools({ ctx: context, capabilities: CAPABILITIES, mode: 'lazy', scope: { visibleFor: async () => true } })
+  assert.deepEqual(registered.names, [])
+  assert.ok(registered.requested.length > 0)
+})
+
 // --- summary ----------------------------------------------------------------
 
 console.log(`\n${passed} tool-scope-bridge checks passed, ${failures.length} failed`)

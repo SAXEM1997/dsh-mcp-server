@@ -697,6 +697,9 @@ export function makeServices() {
     injectedMessages: () => [...injectedMessages],
     admittedRequests: () => [...admittedRequests],
     workspaces: () => workspaces.map((workspace) => ({ id: workspace.id, path: workspace.path, title: workspace.title, sessionIds: [...workspace.sessionIds] })),
+    // The registry itself, so a test can seed a workspace before touching a route
+    // that lists them (otherwise every assertion compares empty sets).
+    workspaceRegistry,
     workspaceCalls: () => [...workspaceCalls],
     makeAgent,
     agentTools,

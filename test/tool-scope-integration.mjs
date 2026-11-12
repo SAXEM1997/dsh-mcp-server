@@ -30,14 +30,18 @@ async function check(name, run) {
 }
 
 const h = await createPluginHarness({ label: 'tool-scope-integration' })
+// Seed the registry before touching the route: with no workspaces every assertion
+// below would compare empty sets and pass without exercising a selection.
+await h.workspaceRegistry.create('/repo/seed-a')
+await h.workspaceRegistry.create('/repo/seed-b')
 
 try {
   const first = await (await fetch(h.scopeUrl)).json()
 
-  await check('GET reports a supported scope over the real plugin', () => {
+  await check('GET reports a supported scope and the seeded workspaces', () => {
     assert.equal(first.supported, true, 'the harness registry must be usable')
     assert.equal(first.mode, 'global', 'a deployment that never chose is global')
-    assert.ok(Array.isArray(first.workspaces))
+    assert.deepEqual(first.workspaces.map((row) => row.path).sort(), ['/repo/seed-a', '/repo/seed-b'])
   })
 
   await check('POST saves the sidecar, and GET reads it back', async () => {
