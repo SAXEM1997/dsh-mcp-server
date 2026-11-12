@@ -152,7 +152,8 @@ body: { mode: "global" | "selected", workspaceIds: ["ws_ab12"] }
 | 场景 | 行为 |
 |---|---|
 | 本实例已被 `dispose()`（插件被替换） | `409 scope-disposed` |
-| 盘上 `updatedAt` 与本实例最后读到的不一致 | `409 scope-conflict`（页面提示刷新后重试） |
+| 盘上 `updatedAt|writeId` 与本实例最后读到的不一致 | `409 scope-conflict`（服务端随即重读并闩住，页面必须先 GET） |
+| 锁被别的写入者占住超过等待预算 | `409 scope-lock-timeout`（等待预算 8s > 最坏持有 ~6s） |
 
 代价：多一次读盘（几百字节）、一个 `updatedAt` 与一个 `writeId` 字段（后者用来区分同一毫秒的两次写）；不改文档格式版本。
 
@@ -209,6 +210,7 @@ scope: {
 | 415 | — | `content-type` 不是 JSON |
 | 409 | `scope-disposed` | 本实例已被替换（插件重载），拒绝写入 |
 | 409 | `scope-conflict` | 盘上文档已被别处改动；服务端随即重读并**闩住**，必须先 GET 再存 |
+| 409 | `scope-lock-timeout` | 另一个写入者持有锁超过等待预算（正常并发不会触发） |
 | 500 | `scope-write-failed` | 写文件失败，内存保持旧值 |
 | 500 | `scope-registry-unavailable` | 注册表抛错（不是「没有工作区」） |
 | 500 | `scope-write-unverified` | 写前读盘失败（无法确认没有并发写），不盲写 |

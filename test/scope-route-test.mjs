@@ -86,6 +86,28 @@ await check('an untrusted caller learns nothing at all, not even the workspace l
   })
 })
 
+await check('a registry that arrives after the route is built still fills the picker', async () => {
+  // The defect: the handler captured the registry when it was constructed. A Harness
+  // that exposes it later left the picker empty forever, with no note explaining why.
+  let registry
+  const scope = fakeScope({ mode: 'selected', workspaceIds: [] })
+  const handler = createScopeHandler({
+    scope,
+    getRegistry: () => registry,
+    trust: () => true,
+  })
+  const { server, base } = await serve(handler)
+  try {
+    const before = await (await fetch(base)).json()
+    assert.deepEqual(before.workspaces, [])
+    registry = { list: () => WORKSPACES }
+    const after = await (await fetch(base)).json()
+    assert.deepEqual(after.workspaces.map((row) => row.id), ['ws_a', 'ws_b'])
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
 // --- writing -----------------------------------------------------------------
 
 await check('POST saves the selection and answers with the live state', async () => {

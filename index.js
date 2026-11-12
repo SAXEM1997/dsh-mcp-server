@@ -839,7 +839,7 @@ export function apply(ctx, config = {}) {
       path: scopePath,
       handler: createScopeHandler({
         scope: toolScope,
-        registry: typeof ctx.get === 'function' ? ctx.get('workspaceRegistry') : undefined,
+        getRegistry: () => (typeof ctx?.get === 'function' ? ctx.get('workspaceRegistry') : undefined),
         trust: configTrust,
         allowedOrigins: allowedConfigOrigins,
         maxBodyBytes: configMaxBodyBytes,

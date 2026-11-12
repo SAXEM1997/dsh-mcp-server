@@ -114,9 +114,19 @@ not by `cordis.patch.yml`:
 - `mode: global` (the default) means every workspace sees them, exactly as before this feature.
 - `mode: selected` means only the listed workspaces do; sessions elsewhere do not get the tools at
   all, and do not pay for their schema in the prompt.
-- **Anything unreadable narrows to nobody**: a damaged document, wrong field types, or a Harness with
-  no `workspaceRegistry` all end at "selected, nobody", reported through `dsh_status.scope.notes` and
-  on the settings page. Only a *missing* file means `global`.
+- **Anything unreadable narrows to nobody**: a damaged document or wrong field types end at
+  "selected, nobody", reported through `dsh_status.scope.notes` and on the settings page. Only a
+  *missing* file means `global`.
+- **With no `workspaceRegistry`**: `selected` has nothing to select, so nobody sees the tools;
+  `global` still means everyone, because the scope is then a no-op rather than an outage. The state
+  carries `scope-unsupported`.
+- **Saving never overwrites someone else's change**: the write compares `updatedAt|writeId` on disk
+  (`writeId` separates two writes in the same millisecond) while holding a lock. If disk moved on,
+  the save returns `409 scope-conflict` **and immediately re-reads the document to adopt the winner's
+  value**; the page must `GET` once before it may save again, so a blind retry is refused while a
+  deliberate one is allowed. A stamp that cannot be read returns `500 scope-write-unverified` instead
+  of writing blind. A replaced plugin returns `409 scope-disposed`; a lock held past the wait budget
+  returns `409 scope-lock-timeout`.
 
 Why not in `cordis.patch.yml`: editing that row reloads the plugin, and a reload invalidates the tool
 set a running step already snapshotted. Scope is a runtime switch; changing it must not interrupt a turn.

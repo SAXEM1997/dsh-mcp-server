@@ -448,6 +448,23 @@ await check('two instances cannot both write from the same reading', async () =>
   assert.equal(onDisk.workspaceIds.length, 1, 'one write won, the other did not merge or clobber')
 })
 
+await check('a write that never returns fails the save instead of hanging it', async () => {
+  // The defect: the critical section's write had no ceiling, so one wedged store
+  // parked the save chain — and every save queued behind it — forever.
+  const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }] })
+  const store = memoryStore(undefined)
+  store.write = () => new Promise(() => {})
+  const scope = createToolScope({ ...world, store })
+  const started = Date.now()
+  const error = await scope.save({ mode: 'selected', workspaceIds: ['ws_a'] }).then(
+    () => undefined,
+    (failure) => failure,
+  )
+  assert.ok(error, 'the save must not resolve')
+  assert.equal(error.name, 'ScopeError')
+  assert.ok(Date.now() - started < 8000, 'the critical section must be bounded')
+})
+
 // --- summary -----------------------------------------------------------------
 
 console.log(`\n${passed} tool-scope checks passed, ${failures.length} failed`)
