@@ -95,3 +95,22 @@
         token: !!js process.env.DSH_MCP_TOKEN
         defaultCwd: /Users/me/work
 ```
+
+## 工具作用域（`toolScopeFile`）
+
+DSH 会话能看见本插件的工具，由一份**独立的作用域文档**决定，不写在 `cordis.patch.yml` 里：
+
+```json
+{ "version": 1, "mode": "selected", "workspaceIds": ["<工作区 id>", "…"] }
+```
+
+- 路径：`$DSH_HOME/mcp/tool-scope.json`（mode 0600，原子写）；用 `toolScopeFile` 可改到别处。
+- `mode: global`（缺省）＝ 所有工作区可见，与本特性引入前完全一致。
+- `mode: selected` ＝ 只有列出的工作区可见，其余工作区的会话**看不到这些工具**，也就不为它们的 schema 付上下文成本。
+- **读不出来一律收紧**：文档损坏、字段类型不对、Harness 没有 `workspaceRegistry`，都落到「谁都不给」，
+  并在 `dsh_status.scope.notes` 与设置页上写明原因；只有**文件不存在**才是 `global`。
+
+为什么不在 `cordis.patch.yml`：改那一行会重载插件，而重载会让正在跑的那一步已快照的工具集失效。
+作用域是运行期开关，改它不该打断进行中的对话。
+
+设置页的「工具作用域」一节就是这份文档的界面；`dsh_status.scope` 给出 `mode`/`workspaceIds`/`notes`/`unmatchedAgents`。

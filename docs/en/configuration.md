@@ -100,3 +100,26 @@ Example row:
         token: !!js process.env.DSH_MCP_TOKEN
         defaultCwd: /Users/me/work
 ```
+
+## Tool scope (`toolScopeFile`)
+
+Which DSH sessions can see this plugin's tools is decided by a **separate scope document**,
+not by `cordis.patch.yml`:
+
+```json
+{ "version": 1, "mode": "selected", "workspaceIds": ["<workspace id>", "…"] }
+```
+
+- Path: `$DSH_HOME/mcp/tool-scope.json` (mode 0600, atomic write); override it with `toolScopeFile`.
+- `mode: global` (the default) means every workspace sees them, exactly as before this feature.
+- `mode: selected` means only the listed workspaces do; sessions elsewhere do not get the tools at
+  all, and do not pay for their schema in the prompt.
+- **Anything unreadable narrows to nobody**: a damaged document, wrong field types, or a Harness with
+  no `workspaceRegistry` all end at "selected, nobody", reported through `dsh_status.scope.notes` and
+  on the settings page. Only a *missing* file means `global`.
+
+Why not in `cordis.patch.yml`: editing that row reloads the plugin, and a reload invalidates the tool
+set a running step already snapshotted. Scope is a runtime switch; changing it must not interrupt a turn.
+
+The settings page's "Tool scope" section is the UI for this document; `dsh_status.scope` reports
+`mode`/`workspaceIds`/`notes`/`unmatchedAgents`.
