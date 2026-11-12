@@ -177,6 +177,18 @@ await check('an inject that never answers reports nothing registered', async () 
   assert.ok(registered.requested.length > 0)
 })
 
+await check('a late inject still updates the names its caller already holds', async () => {
+  const tools = { rows: [], register(definition) { this.rows.push(definition); return () => {} }, get() { return undefined } }
+  let fire = null
+  const context = { get: () => undefined, inject: (_names, callback) => { fire = () => callback({ tools, effect: () => {} }) } }
+  const registered = registerDshTools({ ctx: context, capabilities: CAPABILITIES, mode: 'lazy', scope: { visibleFor: async () => true } })
+  // The caller holds this array; replacing the property would strand it empty.
+  const held = registered.names
+  fire()
+  assert.ok(held.length > 0, 'the same array must show what registered')
+  assert.deepEqual(held, registered.names)
+})
+
 // --- summary ----------------------------------------------------------------
 
 console.log(`\n${passed} tool-scope-bridge checks passed, ${failures.length} failed`)
