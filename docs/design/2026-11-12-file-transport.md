@@ -1,6 +1,6 @@
 # 文件传输：预签名上传 + 图片读取（设计）
 
-> 2026-11-12 · 对应 issue #4 · 状态：**待评审**
+> 2026-11-12 · 对应 issue #4 · 状态：**待评审（v2，按评审意见修订）**
 
 ## 1. 问题
 
@@ -33,8 +33,10 @@
 - 不传非图片文件（PDF/zip 等）：DSH 的附件服务是图片向的（`saveImages()` 校验 mediaType、
   做尺寸归一化），文件类没有对等入口。
 - 不做流式/断点续传。
-- 不改 stdio 传输：插件需要进程内的 `sessionController`/`attachments`/`agents`
-  （`lib/dsh-delivery.js:76-90`），stdio 拿不到。
+- 不改 stdio 传输：插件需要进程内的 `sessionController`（`lib/dsh-delivery.js:77`）与 `agents`
+  （`:87`）——现有的投递路径已在用；`attachments` 服务同样存在（`ctx.get("attachments")`，
+  本插件目前没用到，本期新增）。stdio 拿不到这些服务。
+- 不支持浏览器跨域直传（上传是服务间调用，不是网页表单）。
 
 **反目标（即使能跑也算失败）**
 
@@ -55,11 +57,11 @@
 ## 4. 选定方案
 
 ```
-① dsh_prepare_upload({files:[{name?, mediaType, bytes?}]})
+① dsh_prepare_upload({files:[{name?, mediaType, expectedBytes?}], clientBaseUrl?})
      → {uploads:[{fileId, uploadUrl, method:"PUT", expiresAt, maxBytes}]}
 
-② 客户端 PUT 字节到 uploadUrl              ← 不需要鉴权头，只需 content-type
-     200 → {fileId, bytes, sha256, mediaType}
+② 客户端 PUT 字节到 uploadUrl              ← 不需要鉴权头
+     200 → {fileId, storedBytes, sha256, mediaType}
 
 ③ dsh_run_prompt(prompt, fileIds:[...])     ← 插件把图片挂进消息 parts
 ```
@@ -82,11 +84,22 @@ dsh_read_attachment(sessionId, seq, maxEdge?) → content:[{type:"image", data, 
 ### 4.2 与早前「multipart 上传」结论的关系
 
 第二轮讨论里定的是「一次 multipart 传多个文件」。预签名方案取代了它：**每个槽位只对应一个文件**，
-所以 PUT 的 body 就是原始字节，不再需要 multipart 解析。
+所以 PUT 的 body 就是原始字节，不再需要 multipart 解析。多文件靠「一次铸造 N 个槽位」覆盖——
+比 multipart 更好：每个文件独立进度、独立重试，一个坏了不用整批重传。
 
-多文件的场景靠「一次铸造 N 个槽位」覆盖——比 multipart 更好的是：每个文件有独立的进度、
-独立的失败重试，一个坏了不用整批重传。（`Response.formData()` 在 Node 24 可用这条结论仍然成立，
-只是本设计用不上了。）
+（`Response.formData()` 在 Node 24 可用这条结论仍然成立，只是本设计用不上。）
+
+### 4.3 术语
+
+| 词 | 含义 |
+|---|---|
+| **槽位 / slot** | 一次铸造为一个文件预留的位置：nonce + fileId + mediaType + maxBytes + 过期时间，**nonce 与 fileId 严格 1:1**（一个槽就是一个文件） |
+| **nonce** | 槽位的密钥，只出现在 `uploadUrl` 路径里；32 字节随机，服务端只存它的 hash |
+| **fileId** | 槽位的公开标识，铸造时即生成、随响应返回；存储成功后才可被 `dsh_run_prompt` 引用 |
+| **uploadUrl** | `origin + /mcp-files/ + nonce` 组成的绝对地址，客户端直接 PUT |
+| `expectedBytes` | **请求**里的「预计字节数」，只用来设 `maxBytes`，可省略 |
+| `storedBytes` | **响应**里的「实际入库字节数」，以服务端为准 |
+| `mediaType` | 图片的 MIME 类型；**不用** `mimeType` 这个词（避免与 MCP 内容块的字段名混淆） |
 
 ## 5. 契约
 
@@ -95,15 +108,27 @@ dsh_read_attachment(sessionId, seq, maxEdge?) → content:[{type:"image", data, 
 入参：
 
 ```jsonc
-{ "files": [ { "name": "a.jpg", "mediaType": "image/jpeg", "bytes": 85918 } ]  // 1..uploadMaxFiles 项
+{
+  "files": [ { "name": "a.jpg", "mediaType": "image/jpeg", "expectedBytes": 85918,
+               "sha256": "9f2c…" } ],              // sha256 可选，见 6.1
+  "clientBaseUrl": "https://dsh.example.com:23000"   // 可选，见 5.7
+}
 ```
+
+- `files`：1 到 `uploadMaxFiles` 项；`name` 可选（只用于日志与返回体回显）。
+- `mediaType`：**必填**，且必须同时满足两条：`image/*` 白名单
+  （`image/jpeg`、`image/png`、`image/webp`、`image/gif`、`image/avif`），
+  以及 `attachments.imageLimits.mediaTypes` 允许（运行时从服务读，部署可能更窄）。
+  任一不满足 → `415`，整批拒绝（不做部分成功）。
+- `expectedBytes`：可选；缺省按 `uploadMaxFileBytes`。
+- `clientBaseUrl`：可选，见 5.7。
 
 出参：
 
 ```jsonc
 { "uploads": [ {
   "fileId": "f_7Kd2…",
-  "uploadUrl": "http://dsh:23022/mcp-files/v1.Kd8x…",   // 绝对地址
+  "uploadUrl": "http://dsh:23022/mcp-files/v1.Kd8x…",
   "method": "PUT",
   "expiresAt": "2026-11-12T04:52:00.000Z",
   "maxBytes": 20971520
@@ -113,129 +138,211 @@ dsh_read_attachment(sessionId, seq, maxEdge?) → content:[{type:"image", data, 
 ### 5.2 `PUT <uploadUrl>`
 
 - 请求体 = 原始字节。
-- `content-type`：**可省略**（`curl -T` 默认发 `application/octet-stream`，按「未声明」处理，
-  以铸造时声明的 `mediaType` 为准）；但如果显式给了具体类型且与声明不符，返回 `415`
-  （**槽位不消耗**）。这样 `curl -T` 与带类型的 `fetch` 都能直接用。
-- 成功 `200`，返回 `{fileId, bytes, sha256, mediaType}`。
-- **幂等重试**：首次成功之前，同一 URL 可以重复 PUT（网络中断、超时都不消耗槽位）；
-  首次成功后该 URL 立即失效，再 PUT 返回 `409 already uploaded`。
-- 单槽上限 = `min(铸造时声明的 bytes, uploadMaxFileBytes)`；声明与实际不符时以较小的为准。
-  超过 → `413`（槽位不消耗，可用更小的文件重试）。
-- 过期 → `410 expired`，客户端应重新 `dsh_prepare_upload`。
+- **`content-type` 规则**：可省略；`application/octet-stream` 视为「未声明」，以铸造时的
+  `mediaType` 为准；若给出具体类型且与声明不符 → `415`（槽位不消耗）。这条是为了让
+  `curl -T`（默认发 octet-stream）能直接用。
+- **单槽上限** = `min(expectedBytes, uploadMaxFileBytes)`；实际字节超过 → `413`，
+  槽位不消耗，可用更小的文件重试。
+- **幂等重试**：首次成功之前，同一 URL 可重复 PUT（网络中断、超时都不消耗槽位）。
+  首次成功后该 URL 立即失效，再 PUT → `409 already uploaded`。
+- **并发**：同一 nonce 的两个 PUT 同时到达时，收体前先做一次状态 CAS（`minted → consuming`），
+  只有抢到 CAS 的那次能收体；另一次立刻 `409 upload in progress`。收体结束再 CAS 到 `stored`。
+  不允许「后写覆盖」。
+- **内容校验**（顺序执行，任一失败 → `415`，计一次失败尝试）：
+  1. `content-length` 与实际到达字节一致（防 chunked 抖动）；
+  2. 魔数嗅探与声明 `mediaType` 一致（JPEG `FFD8FF`、PNG `89504E47`、GIF `GIF8`、WebP `RIFF….WEBP`、AVIF `ftypavif`）；
+  3. 若铸造时给了 `sha256`，实到字节的摘要必须相等；
+  4. 解码前读图片头拿到宽高，`width × height ≤ 100 MP`（像素炸弹防线：20 MiB 的 JPEG 可以解出几十亿像素）；
+  5. 通过后才交给 `saveImages()`。
+- **失败尝试次数**：每个槽位最多 3 次（`uploadMaxAttempts`）。到顶 → `410 slot burned`，
+  防「拿垃圾字节无限重试」把解码当 CPU 放大器。网络中断（未收全）不计次数。
+- **TTL**：PUT 开始时校验一次过期；上传过程中到期不打断，但**提交前再校验一次**，
+  已过期则丢弃已收字节并返回 `410`（避免过期后仍写入）。
 
-> **关于「单次」的含义**：这里的单次是「单次**成功**」。失败重试不消耗槽位——这是对网络
-> 抖动、代理超时、客户端中途退出的必要容忍，否则一次超时就得整套重铸。
+> **「单次」的含义**：单次指的是「单次**成功**」。失败重试不消耗槽位——这是对网络抖动、
+> 代理超时、客户端中途退出的必要容忍，否则一次超时就得整套重铸。
 
-### 5.3 `dsh_run_prompt(..., fileIds)`
+### 5.3 `fileId` 的生命周期
 
-- 新参数 `fileIds?: string[]`，上限同 `uploadMaxFiles`。
-- 插件：`attachments.saveImages([{data, mediaType}])` 已经在上传成功时做过；投递时按
-  `fileId → attachment ref` 映射拼 parts：`[{type:"text",text}, {type:"image",attachment}, …]`。
-- 未知/过期 `fileId` → `404 unknown fileId`（不静默丢图）。
-- **可复用**：同一 `fileId` 在 TTL 内可以多次引用（发到多个会话、同一会话发两次），
-  它不是一次性的——一次性的是上传用的 nonce。
+```
+minted ──PUT 成功──► stored ──fileIdTtlMs──► expired
+   │                   │
+   └─uploadTtlMs 到期──┴─► gone
+```
 
-### 5.4 `dsh_read_attachment`
+| 状态 | `dsh_run_prompt` 引用时 | 说明 |
+|---|---|---|
+| `minted` | `409 not uploaded yet` | 铸了但还没 PUT 成功 |
+| `stored` | 正常引用 | 可复用，见下 |
+| `expired` / `gone` | `404 unknown fileId` | 映射已清理 |
 
-- 入参 `sessionId`、`seq`（事件序号）、可选 `maxEdge`（默认 1568）。
-- 实现：从会话事件里取 attachment ref → `attachments.readImageRequest(ref, {longEdge:maxEdge})`
-  → 返回 `content:[{type:"image", data:<base64>, mimeType}]`。
-- **权限**：与其它会话类工具口径一致，进 handler 先走 `assertCallerMay(sessionId, caller)`
-  （`lib/dsh-capabilities.js:220-232`）——`restrictToOwner` 打开时，调用方只能读自己创建的会话，
-  防止 A 客户端借 `seq` 读 B 会话里的图。
+- **两个 TTL 各管一段**：`uploadTtlMs`（铸造 → 首次成功上传，默认 10 min）；
+  `fileIdTtlMs`（成功上传 → 引用失效，默认 1 h）。
+- **`fileId` 可复用**：在有效期内可以多次引用（发到多个会话、同一会话发两次）。一次性的只有 nonce。
+- **重启即失效**：nonce 与 fileId 映射都在内存里（无状态端点，不落盘）。进程重启后，
+  所有未引用的 id 一律 `404`；已进入会话的图片不受影响（它们已是 attachment ref）。
+
+### 5.4 `dsh_run_prompt(..., fileIds)`
+
+- 新参数 `fileIds?: string[]`，长度上限同 `uploadMaxFiles`。
+- 插件按 `fileId → attachment ref` 拼 parts：
+  `[{type:"text",text}, {type:"image",attachment:ref}, …]`，顺序与 `fileIds` 一致。
+- 状态不对或未知 → `409` / `404`（见 5.3），**不静默丢图**。
+
+### 5.5 `dsh_read_attachment`
+
+- 入参 `sessionId`、`seq`（会话事件的序号，与 `dsh_read_session` 返回的 `events[].seq` 同一套编号）、
+  可选 `maxEdge`（默认 1568）。
+- **`seq` 的域**：必须先按 `sessionId` 取出该会话的事件列表，再在其中按 `seq` 查找——
+  不允许把 `seq` 当全局索引查（那会跨会话读到别人的图）。
+- 实现：从会话事件里取 attachment ref → `attachments.readImageRequest(ref, target, signal)`。
+  **`target` 是 `{width, height, maxBytes}`**，没有 `longEdge` 字段（`api-catalog.js:6609-6611`）。
+  `maxEdge` 需要换算成宽高：已知原图宽高 `w/h`，长边压到 `maxEdge` ⇒
+  `s = min(1, maxEdge / max(w, h))`，`target = {width: round(w*s), height: round(h*s), maxBytes}`。
+  也可直接问 `LlmRuntime.imageRequestTarget(provider, model, ref)` 拿现成 target（`api-catalog.js:1944`），
+  但那样就把「看图的是哪个模型」这个知识耦合进来了——本设计选前者。
+  → 返回 `content:[{type:"image", data:<base64>, mimeType}]`（这里的 `mimeType` 是 MCP 内容块的
+  协议字段名，与本设计的 `mediaType` 不是同一个词）。
+- **权限**：进 handler 先走 `assertCallerMay(sessionId, caller)`（`lib/dsh-capabilities.js:220-232`）——
+  `restrictToOwner` 打开时，调用方只能读自己创建的会话。
 - `projectToolOutcome` 增加 `outcome.content` 透传（当前只认 `text`/`structuredContent`）。
-- 单次最多 4 张原生附图是**客户端**的上限（Hermes `_MCP_NATIVE_IMAGE_MAX`），服务端不做限制，
+- 单次最多 4 张原生附图是**客户端**的上限（Hermes `_MCP_NATIVE_IMAGE_MAX`），服务端不设限，
   但文档要写明「多张请分次读取」。
 
-### 5.5 配置键
+### 5.6 配置键
 
 | 键 | 默认 | 夹值 | 说明 |
 |---|---|---|---|
-| `uploadTtlMs` | 600000（10 min） | 60 s – 24 h | 铸造到首次成功上传的窗口 |
+| `uploadTtlMs` | 600000（10 min） | 60 s – 24 h | 铸造 → 首次成功上传 |
+| `fileIdTtlMs` | 3600000（1 h） | 60 s – 24 h | 成功上传 → 引用失效 |
 | `uploadMaxFileBytes` | 20 MiB | 64 KiB – 256 MiB | 单文件 |
-| `uploadMaxFiles` | 10 | 1 – 20 | 上界受 DSH 消息的 20 张限制约束 |
-| `uploadMaxBytes` | 64 MiB | 1 MiB – 512 MiB | 单次 `dsh_prepare_upload` 的总配额 |
+| `uploadMaxFiles` | 10 | 1 – 20 | 上界受 DSH 单条消息 20 张限制约束 |
+| `uploadMaxBytes` | 64 MiB | 1 MiB – 512 MiB | 单次 `dsh_prepare_upload` 的总配额（铸造时按各槽 `maxBytes` 之和校验，超则 `400`） |
+| `uploadMaxAttempts` | 3 | 1 – 10 | 单槽允许的失败尝试次数 |
+| `uploadGlobalBudgetBytes` | 512 MiB | 64 MiB – 4 GiB | 全局「已铸造未引用」的字节预算 |
+| `trustedProxies` | `[]` | — | 只有在列表里的 peer 才允许用 `X-Forwarded-*` |
 
 夹值在读取时做（照 `maxBodyBytes` 的既有写法，`index.js:547-549`），配置错也扩不出安全区。
 
-### 5.6 上传地址怎么来
+### 5.7 上传地址怎么来
 
 `uploadUrl` 的 origin 由**请求本身**推导，不由服务端自报监听地址：
 
 ```
-origin = clientBaseUrl（若本次调用显式传入）
-      ?? X-Forwarded-Proto + X-Forwarded-Host（若存在）
+origin = clientBaseUrl（若本次调用传了）
+      ?? X-Forwarded-Proto + X-Forwarded-Host   ← 仅当 peer 在 trustedProxies 里
       ?? Host 头
 ```
 
-请求上下文已经一路传到工具 handler（`lib/http-route.js:198` 构造 `context` →
+**`X-Forwarded-*` 默认不信任**：任何客户端都能伪造这个头，把 `uploadUrl` 指到第三方。
+只有当请求的 `peer` 落在 `trustedProxies`（默认空）里时才采信。
+
+**路由形态**：`/mcp-files/<nonce>` 必须用 `kind: "prefix"` 注册（现有两个路由都是 `exact`，
+重复的 `(kind, path)` 会抛错；`WebRouteKind = "exact" | "prefix"`，`api-catalog.js:9921-9922`），
+在 handler 里再解析 nonce 后缀。路由的 `authorize`/`maxBodyBytes` 与 `/mcp` 一样由工厂闭包注入，
+不经过 `register` 选项——上传路由自己夹 `uploadMaxFileBytes`（不共用 `/mcp` 的 8 MiB）。
+
+请求上下文已经一路传到工具 handler（`lib/http-route.js:197` 构造 `context` →
 `lib/protocol.js:242` `callTool(name, args, context)`），只需给 `context` 加 `origin` 字段。
 
 `clientBaseUrl` 只覆盖**本次调用**，不落库；`origin` 同样只在响应里回声，不参与鉴权。
+（它存在的唯一理由：反代改写了 `Host` 又没设 `X-Forwarded-*` 时，服务端无从得知外部地址。）
 
-### 5.7 `initialize` 的 `_meta` 与 `dsh_status`
-
-`initialize` 结果的 `_meta` 里加一段能力声明，客户端握手一次就知道怎么上传：
+### 5.8 `initialize._meta` 与 `dsh_status`
 
 ```jsonc
-{ "_meta": { "dsh-mcp-btwy": {
-  "fileUpload": {
-    "supported": true,
-    "prepareTool": "dsh_prepare_upload",
-    "method": "PUT",
-    "maxFileBytes": 20971520,
-    "maxFiles": 10,
-    "ttlMs": 600000
-  }
-} } }
+{ "_meta": { "dsh-mcp-btwy": { "fileUpload": {
+  "supported": true, "prepareTool": "dsh_prepare_upload", "method": "PUT",
+  "maxFileBytes": 20971520, "maxFiles": 10, "uploadTtlMs": 600000, "fileIdTtlMs": 3600000
+} } } }
 ```
 
-`dsh_status` 的返回里放同一份摘要（不含具体 URL）。**不暴露固定上传端点**——地址每次铸造时现给。
+`dsh_status` 返回同一份摘要（不含地址）。**不暴露固定上传端点**——地址每次铸造时现给。
 
-### 5.8 错误码
+**兼容**：这是一组新增工具与新增 `_meta` 键，老客户端忽略即可；版本走 **1.3.0**（minor）。
+不存在破坏性改动，无需迁移。
+
+### 5.9 错误
+
+**上传端点（HTTP 状态码）**
+
+| 码 | 场景 | 槽位 |
+|---|---|---|
+| `200` | 成功 | 消耗 |
+| `410` | nonce 过期（含提交前二次校验发现已过期） | 作废 |
+| `413` | 超过单槽上限 | **不消耗** |
+| `415` | `content-type` 与声明不符 | **不消耗** |
+| `409` | 该 nonce 已成功上传过 | 已消耗 |
+| `429` | 该 nonce 的 PUT 频率超限 | 不消耗 |
+
+**工具错误（`result.isError=true`）**
 
 | 码 | 场景 |
 |---|---|
-| `400` | `files` 缺失、为空、超过 `uploadMaxFiles`，或字段类型不对 |
-| `401` | `dsh_prepare_upload` 走 MCP 通道时的常规鉴权失败 |
-| `404` | `fileId` 未知或已过期（`dsh_run_prompt`） |
-| `409` | 该 nonce 已成功上传过 |
-| `410` | nonce 过期 |
-| `413` | 超单文件/总配额 |
-| `415` | `content-type` 与声明不符 |
-| `429` | 速率上限（默认 60 次/分钟，全局） |
+| `400` | `files` 缺失/为空/超过 `uploadMaxFiles`/字段类型不对 |
+| `404` | `fileId` 未知或已过期 |
+| `409` | `fileId` 尚未上传成功 |
+| `415` | `mediaType` 不在白名单 |
+| `429` | 铸造频率超限（默认全局 60 次/分钟） |
 
 ## 6. 安全
 
-- nonce：32 字节随机、单次成功、10 分钟过期、绑定声明的 `mediaType` 与 `maxBytes`。
-- 速率：全局 60 次铸造/分钟；单次铸造 ≤ `uploadMaxFiles`。
-- 存储：字节直接进 DSH 的 content-addressed 附件存储，插件不落第二份。
-- 日志：不记录 nonce 原文，只记前缀 + 结果。
-- 威胁模型：能连到 MCP 端口的攻击者若猜到 nonce 才能上传——概率可忽略；即使上传成功，
-  字节也只在被 `dsh_run_prompt` 引用后才进会话。
+- **nonce**：32 字节随机、单次成功、`uploadTtlMs` 过期、绑定 `mediaType` 与 `maxBytes`；
+  服务端只存 `sha256(nonce)` 的前 16 字节做索引，原文不落任何日志。
+- **并发**：每槽一把锁，先完成者胜，后到者 `409`；不存在「后写覆盖先写」。
+- **重启**：nonce 与 fileId 全在内存，重启即失效——这是有意的：不引入持久化状态，
+  也就不需要为它做一致性。
+- **速率**：铸造全局 60 次/分钟；单 nonce 的 PUT 30 次/分钟（挡住「无限重试」被当作
+  CPU 放大手段）。
+- **存储**：字节直接进 DSH 的 content-addressed 附件存储（`saveImages` 前先校验 mediaType 与
+  尺寸），插件不落第二份；已存储但从未被引用的对象交给 DSH 的保留策略，插件不删。
+- **origin 伪造**：`origin` 只用于拼返回给调用方的 URL。调用方伪造它只会让自己拿到指向
+  别处的地址——服务端不会因此向任何地方发起请求。
+### 6.1 上传通道的两类攻击及处置
 
-## 7. 测试面
+| 攻击 | 怎么做 | 处置 |
+|---|---|---|
+| **内容替换**（抢注） | 攻击者拿到 `uploadUrl` 后抢先 PUT 自己的图；受害者再传收 `409`，会话里出现攻击者的图（图像提示注入） | 铸造时可声明 `sha256`；声明后摘要不符直接 `415`（见 5.2 第 3 步）。**默认不强制**，靠 `uploadTtlMs` 缩短窗口；对「会读不可信网页」的 agent 建议开启 |
+| **资源放大** | 反复 PUT 垃圾字节触发解码；或不停铸造囤积存储 | 单槽 3 次尝试上限；全局「已铸造未引用」字节预算 512 MiB；铸造 60 次/分钟 |
+
+- **威胁模型**：能连到 MCP 端口的攻击者需要拿到 32 字节 nonce 才能上传；即使上传成功，
+  字节也只在被 `dsh_run_prompt` 引用后才进会话。
+- **老实说**：`sha256` 不开启时，「谁先 PUT 谁赢」这个洞是存在的。它的前提是攻击者能读到
+  工具返回的 `uploadUrl`（例如通过提示注入让模型把 URL 外带）。本期默认不强制，理由见 §11。
+
+## 7. 运维与观测
+
+- **日志**：每次铸造与上传记 `noncePrefix(8) + fileId + mediaType + bytes + 结果`，不记 nonce 原文。
+- **`dsh_status.upload`**：`{enabled, minted, stored, failed, expired, pendingSlots}` 计数，
+  便于排查「客户端说传了但没进来」。
+- **孤儿**：`minted` 状态的槽位到期自动清理（定时 60 s 扫一次）；`stored` 但从未被引用的
+  attachment 由 DSH 侧策略处理。
+- **磁盘**：插件不写盘，配额由 DSH 的 attachment 存储决定；`uploadMaxBytes` 只限制单次铸造。
+- **CORS**：不做。上传是服务间调用；浏览器场景不在本期范围。
+
+## 8. 测试面
 
 | 层 | 用例 |
 |---|---|
-| 单元 | nonce 生命周期（铸造/成功/重试不消耗/过期/超额/类型不符）；`fileId` 映射 TTL；origin 推导三种来源；PUT 的 content-type 规则（省略/octet-stream/不符） |
-| 集成 | 假客户端 `curl -T` 全流程；`dsh_run_prompt` 带 1/3/4 张图；未知 id 报 404 |
-| 协议 | 工具数 26 → 28；`initialize` 的 `_meta` 含 `upload` 描述；`tools/list` schema 校验 |
+| 单元 | nonce 生命周期；CAS 并发（第二个 PUT 立刻 409）；失败 3 次烧槽；魔数不符 / sha256 不符 / 像素超限的拒绝；`fileId` 两段 TTL；origin 三种来源、`clientBaseUrl` 覆盖、`X-Forwarded-*` 在非可信 peer 下被忽略 |
+| 集成 | 假客户端 `curl -T` 全流程（含省略 content-type）；`dsh_run_prompt` 带 1/3/4 张图；`409 not uploaded yet` 与 `404` |
+| 协议 | 工具数 26 → 28；`initialize._meta` 含 `fileUpload`；`tools/list` schema 校验；老客户端不带新参数照常工作 |
 | 文档 | `docs/{zh,en}/tools.md` 新增两节，`check:docs` 通过 |
 
-## 8. 票
+## 9. 票
 
 | 票 | 内容 | 依赖 |
 |---|---|---|
-| T1 | `PUT /mcp-files/<nonce>` + nonce 生命周期 + `saveImages` 存储 + 配置键 | — |
-| T2 | `dsh_prepare_upload` + `dsh_run_prompt(fileIds)` + `context.origin` + `_meta` 暴露 | T1 |
+| T1 | `PUT /mcp-files/<nonce>` + 槽位状态机 + `saveImages` + 配置键 | — |
+| T2 | `dsh_prepare_upload` + `dsh_run_prompt(fileIds)` + `context.origin` + `_meta` | T1 |
 | T3 | `dsh_read_attachment` + `projectToolOutcome` 透传 `content` | — |
-| T4 | 文档（zh/en）+ 版本 1.3.0 + 发布说明 | T1–T3 |
+| T4 | 文档（zh/en）+ 1.3.0 + 发布说明 | T1–T3 |
 
 T3 与 T1 可并行。
 
-## 9. 留给实现者的判断
+## 10. 留给实现者的判断
 
-- nonce 的编码格式（不透明串 vs 带版本前缀）——不影响契约。
+- nonce 的编码格式（不透明串 vs `v1.` 前缀）——只要保证不可猜，不影响契约。
 - 上传字节先在内存聚合还是流式落临时文件——20 MiB 上限下内存聚合更简单。
-- 速率上限的实现形态（令牌桶 vs 固定窗口）。
+- 每槽锁的实现形态（Promise map / 互斥队列）。
+- 定时清理用 `setInterval` 还是惰性检查（惰性检查在低流量部署里更省事）。
