@@ -48,9 +48,13 @@ sidecar 的代价：多一份状态。它已经有先例——本插件本来就
 `agent` 上没有 `cwd`（`dsh-agent-loop/lib/index.js:511` 起的字段只有 `id`/`session`/`ctx`）。取法：
 
 ```js
-cwd = ctx.get('workingDirectory')?.get(agent.session)   // 权威，且会话中途改目录会同步
-   ?? agent.session?.header?.cwd                         // 兜底
+cwd = agent.session?.header?.cwd            // 会话打开时记录的位置（权威）
+   ?? ctx.get('workingDirectory')?.get(session)   // 仅在 header 缺失时兜底
 ```
+
+**必须用记录值，不能用 `workingDirectory` 的当前值**：后者会跟随 `working_directory` 工具改目录，
+于是任何会话 `cd` 进一个被选中的工作区根就能在下一步拿到全套控制面工具——这是一条自升权限路径。
+身份是「会话在哪里打开」，不是「它现在站在哪里」。
 
 解析顺序（**两者都是精确匹配**）：
 
