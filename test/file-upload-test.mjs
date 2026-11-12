@@ -1,0 +1,140 @@
+#!/usr/bin/env node
+/**
+ * File upload: minting a slot, PUTting bytes into it, and referencing the
+ * result from a prompt.
+ *
+ * Run: node test/file-upload-test.mjs
+ */
+import assert from 'node:assert/strict'
+
+import { createPluginHarness } from './helpers/plugin-harness.mjs'
+
+const checks = []
+async function check(name, fn) {
+  await fn()
+  checks.push(name)
+}
+
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+)
+
+const h = await createPluginHarness({ label: 'file-upload', withAttachments: true })
+
+/** Mint one slot through the public tool surface. */
+async function mint(files) {
+  return h.call('dsh_prepare_upload', { files })
+}
+
+try {
+  await check('a minted slot returns an absolute url that accepts the bytes', async () => {
+    const minted = await mint([{ name: 'dot.png', mediaType: 'image/png', expectedBytes: PNG_1PX.length }])
+    const [slot] = minted.uploads
+    assert.match(slot.uploadUrl, /^http:\/\/127\.0\.0\.1:\d+\/mcp-files\//, 'upload url must be absolute and on this server')
+    assert.equal(slot.method, 'PUT')
+
+    const put = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
+    assert.equal(put.status, 200, 'a declared image/png with matching bytes is accepted')
+    const body = await put.json()
+    assert.equal(body.fileId, slot.fileId)
+    assert.equal(body.storedBytes, PNG_1PX.length)
+    assert.equal(body.mediaType, 'image/png')
+    assert.match(body.sha256, /^[0-9a-f]{64}$/)
+  })
+
+  await check('the content-type may be omitted and still store the declared type', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }])
+    const [slot] = minted.uploads
+    const put = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX, headers: { 'content-type': 'application/octet-stream' } })
+    assert.equal(put.status, 200, 'octet-stream means "as declared", so curl -T works')
+  })
+
+  await check('a mismatched content-type is refused without burning the slot', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }])
+    const [slot] = minted.uploads
+    const wrong = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX, headers: { 'content-type': 'image/jpeg' } })
+    assert.equal(wrong.status, 415)
+    const retry = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
+    assert.equal(retry.status, 200, 'the link survives a correctable mistake')
+  })
+
+  await check('bytes over the slot ceiling are refused and the link stays usable', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: 200 }])
+    const [slot] = minted.uploads
+    const big = await fetch(slot.uploadUrl, { method: 'PUT', body: Buffer.concat([PNG_1PX, Buffer.alloc(300)]) })
+    assert.equal(big.status, 413)
+    const retry = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
+    assert.equal(retry.status, 200)
+  })
+
+  await check('a link accepts exactly one successful upload', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }])
+    const [slot] = minted.uploads
+    assert.equal((await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })).status, 200)
+    const again = await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })
+    assert.equal(again.status, 409)
+  })
+
+  await check('two simultaneous uploads to one link: one wins, one is refused', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }])
+    const [slot] = minted.uploads
+    const results = await Promise.all([
+      fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX }),
+      fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX }),
+    ])
+    assert.deepEqual(results.map((r) => r.status).sort(), [200, 409])
+  })
+
+  await check('an unknown media type is refused at mint time', async () => {
+    await assert.rejects(
+      () => mint([{ mediaType: 'application/pdf' }]),
+      /returned a tool error|mediaType/,
+      'only image types are accepted',
+    )
+  })
+
+  await check('a prompt carries the uploaded image into the message', async () => {
+    const minted = await mint([{ mediaType: 'image/png', expectedBytes: PNG_1PX.length }])
+    const [slot] = minted.uploads
+    assert.equal((await fetch(slot.uploadUrl, { method: 'PUT', body: PNG_1PX })).status, 200)
+    await h.call('dsh_run_prompt', { prompt: 'look at this', fileIds: [slot.fileId], wait: false })
+    const admitted = h.admittedRequests().filter((request) => (request.content ?? []).some((part) => part.type === 'image')).at(-1)
+    assert.ok(admitted, 'the prompt reached the fake agent')
+    const parts = admitted.content
+    assert.equal(parts[0].type, 'text')
+    assert.equal(parts[1].type, 'image')
+    assert.match(parts[1].attachment.id, /^att_\d+$/)
+    assert.equal(parts[1].attachment.mediaType, 'image/png')
+  })
+
+  await check('an unminted file id is refused instead of silently dropped', async () => {
+    await assert.rejects(
+      () => h.call('dsh_run_prompt', { prompt: 'x', fileIds: ['f_nope'], wait: false }),
+      /unknown fileId/,
+    )
+  })
+
+  await check('initialize advertises the upload shape without a second call', async () => {
+    const init = await h.rpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } })
+    const meta = init.result._meta?.['dsh-mcp-server']?.fileUpload
+    assert.ok(meta, 'the initialize result carries a fileUpload block')
+    assert.equal(meta.supported, true)
+    assert.equal(meta.prepareTool, 'dsh_prepare_upload')
+    assert.equal(meta.method, 'PUT')
+    assert.equal(meta.uploadTtlMs, 300000)
+  })
+
+  await check('dsh_status reports upload state without leaking addresses', async () => {
+    const status = await h.call('dsh_status', {})
+    assert.equal(status.upload.supported, true)
+    assert.equal(status.upload.maxFiles, 10)
+    assert.equal(typeof status.upload.storedFileIds, 'number')
+    assert.ok(!JSON.stringify(status.upload).includes('/mcp-files/'), 'no address is published')
+  })
+} finally {
+  await h.close()
+}
+
+for (const name of checks) process.stdout.write('ok - ' + name + '\n')
+process.stdout.write('\n' + checks.length + ' file-upload checks passed\n')

@@ -254,7 +254,7 @@ origin = clientBaseUrl（若本次调用传了）
 ### 5.8 `initialize._meta` 与 `dsh_status`
 
 ```jsonc
-{ "_meta": { "dsh-mcp-btwy": { "fileUpload": {
+{ "_meta": { "dsh-mcp-server": { "fileUpload": {
   "supported": true, "prepareTool": "dsh_prepare_upload", "method": "PUT",
   "maxFileBytes": 20971520, "maxFiles": 10, "uploadTtlMs": 300000, "fileIdTtlMs": 3600000,
   "requireSha256": false

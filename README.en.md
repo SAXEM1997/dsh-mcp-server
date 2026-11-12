@@ -119,7 +119,7 @@ Confirm you trust the harness that will call this endpoint before installing: it
 | Document | What is inside |
 |---|---|
 | [Getting started](docs/en/getting-started.md) | Install, endpoint file and token, HTTP/stdio/DSH-as-client configs, the self-check bundle. |
-| [Tools and resources](docs/en/tools.md) | All 26 tools, the three resources, progressive reads, pending decisions. |
+| [Tools and resources](docs/en/tools.md) | All 27 tools, the three resources, progressive reads, pending decisions. |
 | [Protocol support](docs/en/protocol.md) | Supported MCP revisions, methods, capabilities, notifications, error codes, authentication, session headers, and unsupported features. |
 | [Sessions and delivery](docs/en/sessions.md) | Caller identity and ownership, waiting, sidebar grouping, queue/steer, GUI open. |
 | [DSH-local tools](docs/en/dsh-local.md) | The in-Harness surface, the lazy front door, and the authority ceiling. |
@@ -132,7 +132,7 @@ The [docs index](docs/README.md) lists both languages.
 
 ## Status
 
-Version **1.2.2**, checked against **DSH 0.2.2-rc.1** (Cordis 4.1.0): 26 MCP tools, 2 resources, 1 resource
+Version **1.2.2**, checked against **DSH 0.2.2-rc.1** (Cordis 4.1.0): 27 MCP tools, 2 resources, 1 resource
 template, 311 offline checks plus live HTTP and stdio suites. Host-only, zero dependencies, MIT.
 DSH ships its own MCP client (0.2.1+, re-checked on 0.2.2-rc.1), so besides this plugin's built-in front door the Harness can
 connect to this endpoint directly — see

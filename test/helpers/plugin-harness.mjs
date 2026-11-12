@@ -102,6 +102,7 @@ export function makeServices() {
 
   /** Messages an internal caller queued through the target agent's handle. */
   const injectedMessages = []
+  const admittedRequests = []
 
   /** Permission presets mirroring the deployment's read-only/write/full table. */
   const permissionOptions = [
@@ -195,6 +196,7 @@ export function makeServices() {
 
   /** Admit one prompt the way the controller does, for both call paths. */
   function admit(request) {
+    admittedRequests.push(request)
     currentSessionId = request.sessionId
     pendingPrompt = request.content.map((part) => part.text).join('')
     events.push({
@@ -658,6 +660,7 @@ export function makeServices() {
     currentId: () => currentSessionId,
     registeredTools: () => [...registeredTools],
     injectedMessages: () => [...injectedMessages],
+    admittedRequests: () => [...admittedRequests],
     workspaces: () => workspaces.map((workspace) => ({ id: workspace.id, path: workspace.path, title: workspace.title, sessionIds: [...workspace.sessionIds] })),
     workspaceCalls: () => [...workspaceCalls],
     makeAgent,
@@ -677,7 +680,12 @@ export function makeServices() {
 async function listenRoutes(webServer) {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
-      const route = webServer.registered.find((entry) => entry.path === (req.url ?? '/').split('?')[0])
+      const path = (req.url ?? '/').split('?')[0]
+      // Mirrors the host: an exact route matches its path, a prefix route matches
+      // everything under it (the upload route needs the nonce from the suffix).
+      const route = webServer.registered.find((entry) => (entry.kind === 'prefix'
+        ? path === entry.path || path.startsWith(entry.path + '/')
+        : entry.path === path))
       if (!route) {
         res.writeHead(404)
         res.end()
@@ -703,12 +711,31 @@ async function listenRoutes(webServer) {
  * close() to dispose the plugin and remove the temporary home.
  */
 export async function createPluginHarness(options = {}) {
-  const { token = 'integration-token', label, applyOptions = {}, tempPrefix = 'dsh-mcp-test-' } = options
+  const { token = 'integration-token', label, applyOptions = {}, tempPrefix = 'dsh-mcp-test-', withAttachments = false } = options
   const dir = await mkdtemp(join(tmpdir(), tempPrefix))
   const endpointFile = join(dir, 'dsh-mcp-endpoint.json')
   const fake = makeServices()
   const hooks = new Map()
   const disposers = []
+  if (withAttachments) {
+    const saved = []
+    fake.services.attachments = {
+      imageLimits: { maxImagesPerMessage: 20, maxMessageImageBytes: 200 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif'] },
+      async saveImages(inputs) {
+        return inputs.map((input, index) => {
+          const ref = { id: 'att_' + (saved.length + index + 1), mediaType: input.mediaType, bytes: input.data.length }
+          saved.push({ ...ref, data: Buffer.from(input.data) })
+          return ref
+        })
+      },
+      async readImageRequest(ref) {
+        const found = saved.find((entry) => entry.id === ref?.id)
+        if (!found) throw new Error('unknown attachment ' + JSON.stringify(ref))
+        return { data: found.data, mimeType: found.mediaType }
+      },
+      __saved: saved,
+    }
+  }
   const ctx = makeContext(fake.services, disposers, hooks)
   // The plugin publishes its endpoint URL here; start from a clean shelf so one
   // test's URL cannot leak into another's assertion.
@@ -727,9 +754,11 @@ export async function createPluginHarness(options = {}) {
   const routes = webServer.registered
   const mcpRoute = routes.find((entry) => entry.path === '/mcp')
   const configRoute = routes.find((entry) => entry.path === '/mcp-config')
-  assert.equal(routes.length, 2, 'the plugin registers the MCP route and its configuration route')
+  assert.equal(routes.length, 3, 'the plugin registers the MCP route, its configuration route and the upload route')
   assert.equal(mcpRoute.kind, 'exact')
   assert.equal(configRoute.kind, 'exact')
+  const uploadRoute = routes.find((entry) => entry.path === '/mcp-files')
+  assert.equal(uploadRoute?.kind, 'prefix', 'the upload route is a prefix so it can carry the nonce')
 
   const server = await listenRoutes(webServer)
   const origin = 'http://127.0.0.1:' + server.address().port
@@ -793,6 +822,7 @@ export async function createPluginHarness(options = {}) {
     routes,
     mcpRoute,
     configRoute,
+    uploadRoute,
     server,
     address,
     configUrl,

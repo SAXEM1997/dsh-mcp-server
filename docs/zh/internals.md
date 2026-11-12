@@ -42,7 +42,7 @@
 - **`initialize` 指令是地图，而不是工具清单的倾倒。** 它说明哪个工具用于启动会话、哪个用于继续会话，何时使用 `wait: false` + `dsh_wait_session`（等待从不取消），读取是窗口式（`mode`/`maxChars`/`afterSeq`）而非全量倾倒，以及审批和问题是按会话报告的，并且只有当部署启用了 `answerApprovals`/`answerQuestions`（或旧的 `answerUserRequests`）时才可回答。
 - **描述承载了 schema 无法承载的内容。** `dsh_run_command(sessionId, line|command)` 在签名中写明了它的两种形态，因为模型如果照着错误的形态调用，结果比没有描述更糟。
 - **失败是分类型的。** 未知工具或格式错误的资源 id 会返回 `-32602 invalidParams`；普通的工具失败是 `isError` 结果，不会结束回合。消息会说明下一步该做什么（“用 `stopActivity: true` 重试”、“在 Harness GUI 中提高此会话的预设”），而不是泄露堆栈。
-- **工具面感知提示词开销。** `exposeToDshMode: lazy` 给 DSH 会话三个工具，而 `dsh_mcp_tools` 的描述已经携带所有已发布的名称及其必需参数（结果行是名称、用途和 `native`）；`full` 则把全部 26 个放入提示词。
+- **工具面感知提示词开销。** `exposeToDshMode: lazy` 给 DSH 会话三个工具，而 `dsh_mcp_tools` 的描述已经携带所有已发布的名称及其必需参数（结果行是名称、用途和 `native`）；`full` 则把全部 27 个放入提示词。
 - **状态只需一次调用。** `dsh_status` 回答“我在跟什么通信”——端点、插件版本、当前模型选择、投递策略、同步状态、工具表形态——无需探测。
 
 ## 验证

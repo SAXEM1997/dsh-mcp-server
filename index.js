@@ -22,6 +22,7 @@ import { resolveConfigPreset } from './lib/config-presets.js'
 import { createClientRegistry, DEFAULT_CLIENT_FLUSH_MS, resolveCaller } from './lib/clients.js'
 import { createConfigHandler } from './lib/config-route.js'
 import { createMcpHttpHandler } from './lib/http-route.js'
+import { createUploadRouteHandler, createUploadStore, ROUTE_PREFIX } from './lib/file-upload.js'
 import { createInternalDelivery, MCP_MESSAGE_KIND } from './lib/dsh-delivery.js'
 import { createQuestionBroker } from './lib/questions.js'
 import { McpGateway, SERVER_NAME } from './lib/protocol.js'
@@ -432,6 +433,17 @@ export function apply(ctx, config = {}) {
     return config.syncOnStart !== false
   }
 
+  const trustedProxies = Array.isArray(config.trustedProxies)
+    ? config.trustedProxies.filter((entry) => typeof entry === 'string' && entry.trim()).map((entry) => entry.trim())
+    : []
+
+  const uploadStore = createUploadStore({
+    attachments: ctx.get('attachments'),
+    config,
+    logger: log,
+  })
+
+
   const capabilities = createDshCapabilities(ctx, {
     logger: log,
     sessionOwners: clients,
@@ -455,6 +467,7 @@ export function apply(ctx, config = {}) {
     createGroups,
     busyMode,
     configPreset,
+    uploadStore,
     openSession: queueOpenSession,
     syncStatus: () => workSyncStatus(),
     questions,
@@ -472,8 +485,20 @@ export function apply(ctx, config = {}) {
     dshToolsState.via = registered.via
   }
 
+  const fileUploadMeta = {
+    supported: uploadStore.available,
+    prepareTool: 'dsh_prepare_upload',
+    method: 'PUT',
+    maxFileBytes: uploadStore.limits.maxFileBytes,
+    maxFiles: uploadStore.limits.maxFiles,
+    uploadTtlMs: uploadStore.limits.ttlMs,
+    fileIdTtlMs: uploadStore.limits.fileIdTtlMs,
+    requireSha256: uploadStore.limits.requireSha256,
+  }
+
   const gateway = new McpGateway({
     serverInfo: { name: SERVER_NAME, title: 'DeepSeek Harness MCP Server', version: VERSION },
+    meta: { [SERVER_NAME]: { fileUpload: fileUploadMeta } },
     instructions: typeof config.instructions === 'string' && config.instructions ? config.instructions : INSTRUCTIONS,
     listTools: () => capabilities.tools,
     callTool: (toolName, args, context) => capabilities.callTool(toolName, args, context),
@@ -587,6 +612,12 @@ export function apply(ctx, config = {}) {
   })()
 
   const disposeRoute = ctx.webServer.register({ kind: 'exact', path, handler })
+
+  const disposeUploadRoute = ctx.webServer.register({
+    kind: 'prefix',
+    path: ROUTE_PREFIX.slice(0, -1),
+    handler: createUploadRouteHandler({ store: uploadStore, logger: log }),
+  })
 
   /**
    * Whether the Web client half is being served for this package.
@@ -944,6 +975,8 @@ export function apply(ctx, config = {}) {
 
   ctx.effect(() => () => {
     try {
+      disposeUploadRoute()
+      uploadStore.dispose()
       disposeRoute()
     } catch (error) {
       log('debug', 'route disposal failed', { error: error instanceof Error ? error.message : String(error) })
