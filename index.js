@@ -492,7 +492,7 @@ export function apply(ctx, config = {}) {
   // internal caller is clamped to its own authority by `lib/dsh-capabilities.js`,
   // never the endpoint's or the deployment's.
   if (exposeToDsh) {
-    const registered = registerDshTools({ ctx, capabilities, logger: log, mode: exposeToDshMode })
+    const registered = registerDshTools({ ctx, capabilities, logger: log, mode: exposeToDshMode, scope: toolScope })
     dshToolsState.names = registered.names
     dshToolsState.via = registered.via
   }
