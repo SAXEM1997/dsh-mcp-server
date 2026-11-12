@@ -79,6 +79,15 @@ dsh_read_attachment(sessionId, seq, maxEdge?) → content:[{type:"image", data, 
 - 与铸造它的那次调用绑定：限定大小上限、允许的 mediaType、过期时间；
 - 只在响应里出现一次，不进日志（服务端日志只记 hash 前缀）。
 
+### 4.2 与早前「multipart 上传」结论的关系
+
+第二轮讨论里定的是「一次 multipart 传多个文件」。预签名方案取代了它：**每个槽位只对应一个文件**，
+所以 PUT 的 body 就是原始字节，不再需要 multipart 解析。
+
+多文件的场景靠「一次铸造 N 个槽位」覆盖——比 multipart 更好的是：每个文件有独立的进度、
+独立的失败重试，一个坏了不用整批重传。（`Response.formData()` 在 Node 24 可用这条结论仍然成立，
+只是本设计用不上了。）
+
 ## 5. 契约
 
 ### 5.1 `dsh_prepare_upload`
@@ -119,12 +128,17 @@ dsh_read_attachment(sessionId, seq, maxEdge?) → content:[{type:"image", data, 
 - 插件：`attachments.saveImages([{data, mediaType}])` 已经在上传成功时做过；投递时按
   `fileId → attachment ref` 映射拼 parts：`[{type:"text",text}, {type:"image",attachment}, …]`。
 - 未知/过期 `fileId` → `404 unknown fileId`（不静默丢图）。
+- **可复用**：同一 `fileId` 在 TTL 内可以多次引用（发到多个会话、同一会话发两次），
+  它不是一次性的——一次性的是上传用的 nonce。
 
 ### 5.4 `dsh_read_attachment`
 
 - 入参 `sessionId`、`seq`（事件序号）、可选 `maxEdge`（默认 1568）。
 - 实现：从会话事件里取 attachment ref → `attachments.readImageRequest(ref, {longEdge:maxEdge})`
   → 返回 `content:[{type:"image", data:<base64>, mimeType}]`。
+- **权限**：与其它会话类工具口径一致，进 handler 先走 `assertCallerMay(sessionId, caller)`
+  （`lib/dsh-capabilities.js:220-232`）——`restrictToOwner` 打开时，调用方只能读自己创建的会话，
+  防止 A 客户端借 `seq` 读 B 会话里的图。
 - `projectToolOutcome` 增加 `outcome.content` 透传（当前只认 `text`/`structuredContent`）。
 - 单次最多 4 张原生附图是**客户端**的上限（Hermes `_MCP_NATIVE_IMAGE_MAX`），服务端不做限制，
   但文档要写明「多张请分次读取」。
@@ -155,7 +169,26 @@ origin = clientBaseUrl（若本次调用显式传入）
 
 `clientBaseUrl` 只覆盖**本次调用**，不落库；`origin` 同样只在响应里回声，不参与鉴权。
 
-### 5.7 错误码
+### 5.7 `initialize` 的 `_meta` 与 `dsh_status`
+
+`initialize` 结果的 `_meta` 里加一段能力声明，客户端握手一次就知道怎么上传：
+
+```jsonc
+{ "_meta": { "dsh-mcp-btwy": {
+  "fileUpload": {
+    "supported": true,
+    "prepareTool": "dsh_prepare_upload",
+    "method": "PUT",
+    "maxFileBytes": 20971520,
+    "maxFiles": 10,
+    "ttlMs": 600000
+  }
+} } }
+```
+
+`dsh_status` 的返回里放同一份摘要（不含具体 URL）。**不暴露固定上传端点**——地址每次铸造时现给。
+
+### 5.8 错误码
 
 | 码 | 场景 |
 |---|---|
