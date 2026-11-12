@@ -459,6 +459,9 @@ export function apply(ctx, config = {}) {
     ),
     logger: log,
   })
+  // A replaced plugin must stop writing: its late save would overwrite whatever the
+  // instance that replaced it has already published.
+  if (typeof ctx?.effect === 'function') ctx.effect(() => () => toolScope.dispose(), 'dsh-mcp-server: tool scope')
 
   const capabilities = createDshCapabilities(ctx, {
     logger: log,

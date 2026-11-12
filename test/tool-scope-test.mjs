@@ -11,6 +11,9 @@
  */
 
 import assert from 'node:assert/strict'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { createToolScope, isVisible, normalizeDocument, SCOPE_FILE_VERSION } from '../lib/tool-scope.js'
 
@@ -334,6 +337,37 @@ await check('a judgement made while a save is writing still sees the old documen
   finish()
   await saving
   assert.equal(await scope.visibleFor(agent), false)
+})
+
+await check('a disposed instance cannot save over its replacement', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scope-disposed-'))
+  const file = join(dir, 'tool-scope.json')
+  const store = { read: async () => { try { return await readFile(file, 'utf8') } catch { return undefined } }, write: (text) => writeFile(file, text) }
+  const registry = { list: () => [{ id: 'ws_0', path: '/r0', sessionIds: [] }], resolveByPath: async () => undefined }
+  const old = createToolScope({ registry, store })
+  await old.save({ mode: 'global' })
+  const fresh = createToolScope({ registry, store })
+  await fresh.ready
+  await fresh.save({ mode: 'selected', workspaceIds: ['ws_0'] })
+  old.dispose()
+  await assert.rejects(() => old.save({ mode: 'global' }), /scope-disposed/)
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).mode, 'selected', 'the replacement keeps the narrower selection')
+})
+
+await check('a save built on a stale read is refused instead of overwriting', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'scope-cas-'))
+  const file = join(dir, 'tool-scope.json')
+  const store = { read: async () => { try { return await readFile(file, 'utf8') } catch { return undefined } }, write: (text) => writeFile(file, text) }
+  const registry = { list: () => [{ id: 'ws_0', path: '/r0', sessionIds: [] }], resolveByPath: async () => undefined }
+  const a = createToolScope({ registry, store })
+  await a.ready
+  await a.save({ mode: 'global' })
+  const b = createToolScope({ registry, store })
+  await b.ready
+  await b.save({ mode: 'selected', workspaceIds: ['ws_0'] })
+  // `a` never saw that write; letting it through would widen a tightened scope.
+  await assert.rejects(() => a.save({ mode: 'global' }), /scope-conflict/)
+  assert.equal(JSON.parse(await readFile(file, 'utf8')).mode, 'selected')
 })
 
 // --- summary -----------------------------------------------------------------
