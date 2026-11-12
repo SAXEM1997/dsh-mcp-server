@@ -1,6 +1,6 @@
 # 文件传输：预签名上传 + 图片读取（设计）
 
-> 2026-11-12 · 对应 issue #4 · 状态：**待评审（v2，按评审意见修订）**
+> 2026-11-12 · 对应 issue #4 · 状态：**已批准（v3）**
 
 ## 1. 问题
 
@@ -121,6 +121,8 @@ dsh_read_attachment(sessionId, seq, maxEdge?) → content:[{type:"image", data, 
   以及 `attachments.imageLimits.mediaTypes` 允许（运行时从服务读，部署可能更窄）。
   任一不满足 → `415`，整批拒绝（不做部分成功）。
 - `expectedBytes`：可选；缺省按 `uploadMaxFileBytes`。
+- `sha256`：可选；但 `uploadRequireSha256: true` 时**必填**（缺 → `400`）。给了就强校验，
+  不符 `415`。
 - `clientBaseUrl`：可选，见 5.7。
 
 出参：
@@ -176,7 +178,7 @@ minted ──PUT 成功──► stored ──fileIdTtlMs──► expired
 | `stored` | 正常引用 | 可复用，见下 |
 | `expired` / `gone` | `404 unknown fileId` | 映射已清理 |
 
-- **两个 TTL 各管一段**：`uploadTtlMs`（铸造 → 首次成功上传，默认 10 min）；
+- **两个 TTL 各管一段**：`uploadTtlMs`（铸造 → 首次成功上传，默认 5 min）；
   `fileIdTtlMs`（成功上传 → 引用失效，默认 1 h）。
 - **`fileId` 可复用**：在有效期内可以多次引用（发到多个会话、同一会话发两次）。一次性的只有 nonce。
 - **重启即失效**：nonce 与 fileId 映射都在内存里（无状态端点，不落盘）。进程重启后，
@@ -213,12 +215,13 @@ minted ──PUT 成功──► stored ──fileIdTtlMs──► expired
 
 | 键 | 默认 | 夹值 | 说明 |
 |---|---|---|---|
-| `uploadTtlMs` | 600000（10 min） | 60 s – 24 h | 铸造 → 首次成功上传 |
+| `uploadTtlMs` | 300000（5 min） | 60 s – 24 h | 铸造 → 首次成功上传 |
 | `fileIdTtlMs` | 3600000（1 h） | 60 s – 24 h | 成功上传 → 引用失效 |
 | `uploadMaxFileBytes` | 20 MiB | 64 KiB – 256 MiB | 单文件 |
 | `uploadMaxFiles` | 10 | 1 – 20 | 上界受 DSH 单条消息 20 张限制约束 |
 | `uploadMaxBytes` | 64 MiB | 1 MiB – 512 MiB | 单次 `dsh_prepare_upload` 的总配额（铸造时按各槽 `maxBytes` 之和校验，超则 `400`） |
 | `uploadMaxAttempts` | 3 | 1 – 10 | 单槽允许的失败尝试次数 |
+| `uploadRequireSha256` | `false` | — | 为 `true` 时 `sha256` 必填（缺 → `400`），并强制校验 |
 | `uploadGlobalBudgetBytes` | 512 MiB | 64 MiB – 4 GiB | 全局「已铸造未引用」的字节预算 |
 | `trustedProxies` | `[]` | — | 只有在列表里的 peer 才允许用 `X-Forwarded-*` |
 
@@ -253,7 +256,8 @@ origin = clientBaseUrl（若本次调用传了）
 ```jsonc
 { "_meta": { "dsh-mcp-btwy": { "fileUpload": {
   "supported": true, "prepareTool": "dsh_prepare_upload", "method": "PUT",
-  "maxFileBytes": 20971520, "maxFiles": 10, "uploadTtlMs": 600000, "fileIdTtlMs": 3600000
+  "maxFileBytes": 20971520, "maxFiles": 10, "uploadTtlMs": 300000, "fileIdTtlMs": 3600000,
+  "requireSha256": false
 } } } }
 ```
 
@@ -308,7 +312,9 @@ origin = clientBaseUrl（若本次调用传了）
 - **威胁模型**：能连到 MCP 端口的攻击者需要拿到 32 字节 nonce 才能上传；即使上传成功，
   字节也只在被 `dsh_run_prompt` 引用后才进会话。
 - **老实说**：`sha256` 不开启时，「谁先 PUT 谁赢」这个洞是存在的。它的前提是攻击者能读到
-  工具返回的 `uploadUrl`（例如通过提示注入让模型把 URL 外带）。本期默认不强制，理由见 §11。
+  工具返回的 `uploadUrl`（例如通过提示注入让模型把 URL 外带）。**默认不强制**：强制会让最常见的
+`curl -T` 变成「先 `sha256sum` 再传」两步；判据是——这个洞的前提是攻击者已经读到 URL，
+而能读到 URL 的攻击者通常也能直接调用工具。要收紧就打开 `uploadRequireSha256`。
 
 ## 7. 运维与观测
 
