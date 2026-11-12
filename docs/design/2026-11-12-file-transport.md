@@ -135,10 +135,11 @@ dsh_read_attachment(sessionId, seq, maxEdge?) → content:[{type:"image", data, 
 
 - `files`：1 到 `uploadMaxFiles` 项；`name` 可选（只用于日志与返回体回显）。
 - `mediaType`：**必填**，且必须同时满足两条：`image/*` 白名单
-  （`image/jpeg`、`image/png`、`image/webp`、`image/gif`、`image/avif`），
+  （`image/jpeg`、`image/png`、`image/webp`、`image/gif`——与 DSH 附件服务实际接受的四种一致），
   以及 `attachments.imageLimits.mediaTypes` 允许（运行时从服务读，部署可能更窄）。
   任一不满足 → `415`，整批拒绝（不做部分成功）。
-- `expectedBytes`：可选；缺省按 `uploadMaxFileBytes`。
+- `expectedBytes`：可选；缺省时该槽的 `maxBytes` 仍是 `uploadMaxFileBytes`，但**只有声明过的值**
+  才计入每次铸造的 `uploadMaxBytes` 总额（否则默认 10 槽只能开 3 个）。
 - `sha256`：可选；但 `uploadRequireSha256: true` 时**必填**（缺 → `400`）。给了就强校验，
   不符 `415`。
 - `clientBaseUrl`：可选，见 5.7。
