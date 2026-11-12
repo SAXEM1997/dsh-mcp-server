@@ -144,7 +144,7 @@ await check('an unreadable document selects nobody and reports it', async () => 
   const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/hermes', sessionIds: ['s1'] }] })
   const scope = createToolScope({ ...world, store: memoryStore('{"mode":"global"}', { readThrows: true }) })
   assert.equal(await scope.visibleFor(agentOf('s1', '/repo/hermes')), false)
-  assert.ok(scope.state().notes.includes('scope-degraded'))
+  assert.ok((await scope.state()).notes.includes('scope-degraded'))
 })
 
 await check('a Harness without a workspace registry says so instead of guessing', async () => {
@@ -152,7 +152,7 @@ await check('a Harness without a workspace registry says so instead of guessing'
   assert.equal(scope.supported, false)
   // Global needs no registry: it was the behaviour before this feature existed.
   assert.equal(await scope.visibleFor(agentOf('s1', '/repo/hermes')), true)
-  assert.ok(scope.state().notes.includes('scope-unsupported'))
+  assert.ok((await scope.state()).notes.includes('scope-unsupported'))
   // The moment a selection is involved, the missing registry means nobody.
   const selected = memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] }))
   const narrowed = createToolScope({ registry: undefined, workingDirectory: undefined, store: selected })
@@ -168,7 +168,16 @@ await check('a workspace deleted after a positive hit stops being visible', asyn
   world.registry.list = () => []
   world.registry.resolveByPath = async () => undefined
   assert.equal(await scope.visibleFor(agentOf('s1', '/repo/hermes')), false)
-  assert.ok(scope.state().notes.includes('scope-stale'))
+  assert.ok((await scope.state()).notes.includes('scope-stale'))
+})
+
+await check('a judgement that blows up hides the tools instead of throwing', async () => {
+  const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/hermes', sessionIds: ['s1'] }] })
+  const scope = createToolScope({ ...world, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
+  // `when` throwing aborts the whole turn upstream, so even an agent shape this
+  // module did not anticipate has to answer "not visible" rather than raise.
+  const hostile = { id: 'a', get session() { throw new Error('broken agent') } }
+  assert.equal(await scope.visibleFor(hostile), false)
 })
 
 // --- saving ------------------------------------------------------------------
@@ -192,8 +201,11 @@ await check('a rejected save leaves the live document untouched', async () => {
   const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/hermes', sessionIds: ['s1'] }] })
   const store = memoryStore(undefined, { writeThrows: true })
   const scope = createToolScope({ ...world, store })
-  await assert.rejects(() => scope.save({ mode: 'selected', workspaceIds: ['ws_a'] }), /scope-write-failed|write/i)
+  // The selection excludes this session on purpose: if the implementation swapped
+  // the live document before the write, the session would already be hidden.
+  await assert.rejects(() => scope.save({ mode: 'selected', workspaceIds: [] }), /scope-write-failed|write/i)
   assert.equal(await scope.visibleFor(agentOf('s1', '/repo/hermes')), true, 'still global after a failed save')
+  assert.equal((await scope.state()).mode, 'global', 'and the reported mode still says global')
 })
 
 await check('saving an unknown workspace id is refused before anything is written', async () => {
@@ -202,6 +214,31 @@ await check('saving an unknown workspace id is refused before anything is writte
   const scope = createToolScope({ ...world, store })
   await assert.rejects(() => scope.save({ mode: 'selected', workspaceIds: ['ws_ghost'] }), /unknown-workspace/)
   assert.equal(store.writes.length, 0)
+})
+
+await check('global keeps the selection it was given, so switching back is one click', async () => {
+  const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/hermes', sessionIds: [] }] })
+  const store = memoryStore(undefined)
+  const scope = createToolScope({ ...world, store })
+  await scope.save({ mode: 'global', workspaceIds: ['ws_a'] })
+  assert.deepEqual((await scope.state()).workspaceIds, ['ws_a'])
+  const reloaded = createToolScope({ ...world, store })
+  assert.deepEqual((await reloaded.state()).workspaceIds, ['ws_a'], 'and the document on disk keeps it too')
+})
+
+await check('a session that changes directory is re-resolved, not answered from cache', async () => {
+  const world = harnessWorld({
+    workspaces: [
+      { id: 'ws_a', path: '/repo/a', sessionIds: [] },
+      { id: 'ws_b', path: '/repo/b', sessionIds: [] },
+    ],
+  })
+  let cwd = '/repo/a'
+  const agent = { id: 'a', session: { id: 's1', get cwd() { return cwd } } }
+  const scope = createToolScope({ ...world, workingDirectory: { get: () => cwd }, store: memoryStore(JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] })) })
+  assert.equal(await scope.visibleFor(agent), true, 'resolved to the selected workspace')
+  cwd = '/repo/b'
+  assert.equal(await scope.visibleFor(agent), false, 'the remembered answer was for the old directory')
 })
 
 // --- summary -----------------------------------------------------------------

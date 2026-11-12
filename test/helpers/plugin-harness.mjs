@@ -395,6 +395,9 @@ export function makeServices() {
   const workspaceCalls = []
   const workspaceRegistry = {
     get archivedSessionIds() { return [...archived] },
+    // The tool scope reads this to know which workspaces exist; without it the
+    // plugin reports `scope-unsupported`, which is a different code path.
+    list() { return workspaces },
     async sessionKnown(id) {
       return id === currentSessionId || id === 'session-cold'
     },

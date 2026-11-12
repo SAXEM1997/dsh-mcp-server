@@ -78,12 +78,11 @@ await check('GET reports the document and the workspaces the page can pick from'
   })
 })
 
-await check('workspace paths travel only to a trusted caller', async () => {
+await check('an untrusted caller learns nothing at all, not even the workspace list', async () => {
   const scope = fakeScope()
   await withServer({ scope, trust: () => false }, async (base) => {
-    const body = await (await fetch(base)).json()
-    assert.ok(body.workspaces.every((row) => row.path === undefined), 'untrusted responses must not enumerate directories')
-    assert.equal(body.workspaces[0].title, 'hermes')
+    const response = await fetch(base)
+    assert.equal(response.status, 403, 'reading the picker is as local-only as changing it')
   })
 })
 
@@ -160,16 +159,53 @@ await check('a method other than GET/HEAD/POST is refused with the allowed list'
   })
 })
 
-await check('an Origin outside the allowlist cannot change the scope', async () => {
+await check('the allowlist relaxes only the Origin/Host comparison', async () => {
   const scope = fakeScope()
-  await withServer({ scope, allowedOrigins: ['http://192.168.50.216:23022'] }, async (base) => {
-    const response = await fetch(base, {
+  // The real `configTrust` for a browser request: Origin must match Host.
+  const browserTrust = (req) => {
+    const origin = req.headers?.origin
+    if (typeof origin !== 'string') return true
+    try {
+      return new URL(origin).host === req.headers.host
+    } catch {
+      return false
+    }
+  }
+  const LAN = 'http://192.168.50.216:23022'
+  await withServer({ scope, trust: browserTrust, allowedOrigins: [LAN] }, async (base) => {
+    const allowed = await fetch(base, { method: 'POST', headers: { 'content-type': 'application/json', origin: LAN }, body: JSON.stringify({ mode: 'global' }) })
+    assert.equal(allowed.status, 200, 'a named origin is admitted')
+
+    const foreign = await fetch(base, {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin: 'http://evil.example' },
       body: JSON.stringify({ mode: 'global' }),
     })
-    assert.equal(response.status, 403)
-    assert.equal(scope.saved.length, 0)
+    assert.equal(foreign.status, 403, 'any other Origin is still refused')
+  })
+})
+
+await check('a stock deployment (no allowlist) can still save from the page', async () => {
+  const scope = fakeScope()
+  // Same-origin page request: Origin matches Host, which is the normal case.
+  const browserTrust = (req) => {
+    const origin = req.headers?.origin
+    if (typeof origin !== 'string') return true
+    try {
+      return new URL(origin).host === req.headers.host
+    } catch {
+      return false
+    }
+  }
+  await withServer({ scope, trust: browserTrust }, async (base) => {
+    const host = new URL(base).host
+    const response = await fetch(base, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: `http://${host}` },
+      body: JSON.stringify({ mode: 'selected', workspaceIds: ['ws_a'] }),
+    })
+    assert.equal(response.status, 200, 'without any allowlist, the page must still be able to save')
+    assert.equal(scope.saved.length, 1)
   })
 })
 
