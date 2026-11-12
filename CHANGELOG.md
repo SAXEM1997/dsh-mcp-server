@@ -3,6 +3,27 @@
 Notable changes to `dsh-mcp-btwy`. Older releases are listed on
 [GitHub Releases](https://github.com/baitouwuya/dsh-mcp-server/releases).
 
+## [1.3.0] - 2026-11-12
+
+### Added
+
+- **File transport for images.** `dsh_prepare_upload` mints single-use upload links
+  (`PUT /mcp-files/<nonce>`), `dsh_run_prompt` accepts `fileIds` and delivers the images as
+  attachment parts, and `dsh_read_attachment` hands one image back as an MCP `image` content block.
+  The nonce in the link is the capability, so a client that only runs shell commands can upload.
+- Upload slots are claimed before any body is read, validate by content-length, magic number,
+  optional `sha256`, and a 100 MP pixel ceiling, and survive transport failures without burning the
+  link.
+- Nine `upload*` configuration keys (limits, TTLs, attempt budget, proxy-header trust).
+
+### Changed
+
+- Tool count 26 → 28.
+
+### Checks
+
+- 341 offline checks, plus the documentation guard.
+
 ## [1.2.2] - 2026-11-11
 
 ### Added

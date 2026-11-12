@@ -1,6 +1,24 @@
 # 文件传输：预签名上传 + 图片读取（设计）
 
 > 2026-11-12 · 对应 issue #4 · 状态：**已批准（v3）**
+>
+> **实现期修订（v4，2026-11-12）**：① `_meta` 的命名空间键用 `dsh-mcp-server`（`SERVER_NAME` 常量，
+> `lib/protocol.js:44`），不是本文早先写的 `dsh-mcp-btwy`；② `trustedProxies`（IP 名单）改为
+> `trustProxyHeaders`（布尔开关）——插件里 `peer` 只有 `'token'`/`'connection'` 两个符号值，
+> 拿不到对端地址，见 §5.7；③ 槽位限流按**槽位数**计（一次铸造 N 个算 N 次），不是按调用次数；
+> ④ `dsh_read_attachment` 增加可选 `index`——`seq` 只定位事件，而一个事件可能带多张图。
+> ⑤ `dsh_status.upload` 的字段叫 `supported`（与 `_meta.fileUpload.supported` 一致），§7 写的 `enabled` 作废。
+> ⑥ `name` 会随 `saveImages` 成为附件的显示名，不再只是回显。
+> ⑦ 上传端点的状态码以 **`structuredContent.httpStatus`** 随失败结果返回（400/404/409/410/413/415/429）；工具失败在 MCP 里是 `isError` 结果而非 JSON-RPC error，所以它只能走 `structuredContent`，不能走 `error.data`。`dsh_read_attachment` 不走这条映射，没有该字段。
+> ⑧ `restrictToOwner` 打开时，`fileId` 绑定铸造它的调用方；别人的 id 一律按「unknown fileId」处理。
+> ⑨ 上传路由对非 PUT 回 405；`maxEdge` 夹在 [64,4096]，`readImageRequest` 的 `maxBytes` 固定 8 MiB。
+> ⑩ `content-type` 不符也计入尝试预算（否则可无限探测）；过期与不存在的链接回同一句话，避免探测 nonce 是否存在。
+> ⑪ 每次铸造的字节上限只统计**声明过**的 `expectedBytes`；未声明者按「单文件上限」占槽但不算进这笔账，否则默认配置下 4 张图就会被拒。
+> ⑫ 只宣传 DSH 真收的四种类型（png/jpeg/webp/gif）；`avif` 去掉，否则 mint 通过、落盘被拒。
+> ⑬ 回执里的 `storedBytes`/`mediaType` 取**存储后的 ref 值**，不是上传字节的原值（提供方可能重编码/缩放）。
+> ⑭ 投递的 image part 带 `encodedBytes`：DSH 按它累加单条消息的图片字节上限，缺了会变成 `NaN` 而失效。
+> ⑮ `index` 越界报错，不静默夹到边界；归属校验失败的消息里回显 `fileId`。
+> ⑯ 存储提供方拒绝字节计一次尝试（3 次烧槽），不无限重试。
 
 ## 1. 问题
 
@@ -117,10 +135,11 @@ dsh_read_attachment(sessionId, seq, maxEdge?) → content:[{type:"image", data, 
 
 - `files`：1 到 `uploadMaxFiles` 项；`name` 可选（只用于日志与返回体回显）。
 - `mediaType`：**必填**，且必须同时满足两条：`image/*` 白名单
-  （`image/jpeg`、`image/png`、`image/webp`、`image/gif`、`image/avif`），
+  （`image/jpeg`、`image/png`、`image/webp`、`image/gif`——与 DSH 附件服务实际接受的四种一致），
   以及 `attachments.imageLimits.mediaTypes` 允许（运行时从服务读，部署可能更窄）。
   任一不满足 → `415`，整批拒绝（不做部分成功）。
-- `expectedBytes`：可选；缺省按 `uploadMaxFileBytes`。
+- `expectedBytes`：可选；缺省时该槽的 `maxBytes` 仍是 `uploadMaxFileBytes`，但**只有声明过的值**
+  才计入每次铸造的 `uploadMaxBytes` 总额（否则默认 10 槽只能开 3 个）。
 - `sha256`：可选；但 `uploadRequireSha256: true` 时**必填**（缺 → `400`）。给了就强校验，
   不符 `415`。
 - `clientBaseUrl`：可选，见 5.7。
@@ -223,7 +242,7 @@ minted ──PUT 成功──► stored ──fileIdTtlMs──► expired
 | `uploadMaxAttempts` | 3 | 1 – 10 | 单槽允许的失败尝试次数 |
 | `uploadRequireSha256` | `false` | — | 为 `true` 时 `sha256` 必填（缺 → `400`），并强制校验 |
 | `uploadGlobalBudgetBytes` | 512 MiB | 64 MiB – 4 GiB | 全局「已铸造未引用」的字节预算 |
-| `trustedProxies` | `[]` | — | 只有在列表里的 peer 才允许用 `X-Forwarded-*` |
+| `trustProxyHeaders` | `false` | — | 是否采信 `X-Forwarded-*`（该路由已要求 token，见 §5.7） |
 
 夹值在读取时做（照 `maxBodyBytes` 的既有写法，`index.js:547-549`），配置错也扩不出安全区。
 
@@ -233,12 +252,17 @@ minted ──PUT 成功──► stored ──fileIdTtlMs──► expired
 
 ```
 origin = clientBaseUrl（若本次调用传了）
-      ?? X-Forwarded-Proto + X-Forwarded-Host   ← 仅当 peer 在 trustedProxies 里
+      ?? X-Forwarded-Proto + X-Forwarded-Host   ← 仅当 trustProxyHeaders: true
       ?? Host 头
 ```
 
 **`X-Forwarded-*` 默认不信任**：任何客户端都能伪造这个头，把 `uploadUrl` 指到第三方。
-只有当请求的 `peer` 落在 `trustedProxies`（默认空）里时才采信。
+要采信必须显式打开 `trustProxyHeaders`。
+
+> 为什么是布尔开关而不是「可信代理 IP 列表」：这条路由的调用方在到达这段代码前**已经通过
+> token 鉴权**，而 `peer` 在插件里只是一个符号值（`'token'`/`'connection'`，`index.js:516`），
+> 拿不到真实对端地址。既然如此，把「是否采信转发头」做成部署级开关更诚实——它不是网络层
+> 信任，而是「我知道前面有代理，且这条路由只有持 token 的调用方能进来」。
 
 **路由形态**：`/mcp-files/<nonce>` 必须用 `kind: "prefix"` 注册（现有两个路由都是 `exact`，
 重复的 `(kind, path)` 会抛错；`WebRouteKind = "exact" | "prefix"`，`api-catalog.js:9921-9922`），
@@ -249,12 +273,16 @@ origin = clientBaseUrl（若本次调用传了）
 `lib/protocol.js:242` `callTool(name, args, context)`），只需给 `context` 加 `origin` 字段。
 
 `clientBaseUrl` 只覆盖**本次调用**，不落库；`origin` 同样只在响应里回声，不参与鉴权。
+
+**兜底按 `http://`**：没有 `X-Forwarded-Proto` 时，`Host` 之外的协议信息不存在，只能假定明文。
+TLS 终止在反代且不设转发头的部署，要么打开 `trustProxyHeaders` 并让反代补头，要么用
+`clientBaseUrl` 显式指定——这两种情况都有明确出口，所以这里不猜 `https`。
 （它存在的唯一理由：反代改写了 `Host` 又没设 `X-Forwarded-*` 时，服务端无从得知外部地址。）
 
 ### 5.8 `initialize._meta` 与 `dsh_status`
 
 ```jsonc
-{ "_meta": { "dsh-mcp-btwy": { "fileUpload": {
+{ "_meta": { "dsh-mcp-server": { "fileUpload": {
   "supported": true, "prepareTool": "dsh_prepare_upload", "method": "PUT",
   "maxFileBytes": 20971520, "maxFiles": 10, "uploadTtlMs": 300000, "fileIdTtlMs": 3600000,
   "requireSha256": false

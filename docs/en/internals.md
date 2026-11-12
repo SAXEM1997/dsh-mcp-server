@@ -184,3 +184,29 @@ has to move with it, or the rows resolve no module.
   project that already exists.
 - Sessions started over MCP are ordinary DSH sessions: they appear in the Harness session list and can
   be opened and continued in the GUI.
+
+- **Uploaded images and files are kept forever.** This plugin hands bytes to DSH's attachment service (`@deepseek-ai/dsh-attachment`), which **never deletes** an object: upstream lists retention and garbage collection under "not decided yet", because resumed and forked sessions may share the same immutable objects. It lives under `$DSH_HOME/attachments/v1/`:
+
+  | Directory | Holds | Safe to delete? |
+  |---|---|---|
+  | `objects/` | normalized image objects (a `fileId` names one of these) | **No** — past sessions lose their images |
+  | `file-objects/` | original uploaded files (content-addressed; `files/` exposes them again under their original names) | **No** — same reason |
+  | `files/` | named entry points for those files (same inode) | **No** |
+  | `$DSH_HOME/cache/attachments/request-images/` | resized variants made for model requests (**not** under this tree; a separate cache) | Yes, rebuilt on demand |
+  | `tmp/` | scratch space used while receiving an upload | Yes |
+
+  `request-images` is a separate cache under `$DSH_HOME/cache/attachments/`; the old
+  `attachments/v1/request-images/` is a leftover from an earlier layout and can be deleted. Measure
+  both:
+
+  ```bash
+  DSH_HOME="${DSH_HOME:-$HOME/.dsh}"
+  du -sh "$DSH_HOME/attachments" "$DSH_HOME/cache/attachments" 2>/dev/null
+  find "$DSH_HOME/attachments" -type f -exec ls -l {} + | sort -k5 -rn | head
+  ```
+
+  (`find -printf` is a GNU extension, hence the `ls -l` sort above.)
+  For reference, a daily-use desktop Harness sat at about 52 MB across 141 files — 19 MB of image
+  objects, 13 MiB added in the last 30 days — plus 204 KB of request cache, against 408 GB free.
+  Cleanup is not a near-term problem. Reclaiming space at all means stopping DSH and deleting the
+  oldest objects by hand, accepting that those sessions lose their images and files.

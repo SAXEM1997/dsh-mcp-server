@@ -42,7 +42,7 @@
 - **`initialize` 指令是地图，而不是工具清单的倾倒。** 它说明哪个工具用于启动会话、哪个用于继续会话，何时使用 `wait: false` + `dsh_wait_session`（等待从不取消），读取是窗口式（`mode`/`maxChars`/`afterSeq`）而非全量倾倒，以及审批和问题是按会话报告的，并且只有当部署启用了 `answerApprovals`/`answerQuestions`（或旧的 `answerUserRequests`）时才可回答。
 - **描述承载了 schema 无法承载的内容。** `dsh_run_command(sessionId, line|command)` 在签名中写明了它的两种形态，因为模型如果照着错误的形态调用，结果比没有描述更糟。
 - **失败是分类型的。** 未知工具或格式错误的资源 id 会返回 `-32602 invalidParams`；普通的工具失败是 `isError` 结果，不会结束回合。消息会说明下一步该做什么（“用 `stopActivity: true` 重试”、“在 Harness GUI 中提高此会话的预设”），而不是泄露堆栈。
-- **工具面感知提示词开销。** `exposeToDshMode: lazy` 给 DSH 会话三个工具，而 `dsh_mcp_tools` 的描述已经携带所有已发布的名称及其必需参数（结果行是名称、用途和 `native`）；`full` 则把全部 26 个放入提示词。
+- **工具面感知提示词开销。** `exposeToDshMode: lazy` 给 DSH 会话三个工具，而 `dsh_mcp_tools` 的描述已经携带所有已发布的名称及其必需参数（结果行是名称、用途和 `native`）；`full` 则把全部 27 个放入提示词。
 - **状态只需一次调用。** `dsh_status` 回答“我在跟什么通信”——端点、插件版本、当前模型选择、投递策略、同步状态、工具表形态——无需探测。
 
 ## 验证
@@ -113,3 +113,24 @@ git push origin v0.23.0   # 触发 .github/workflows/publish.yml
 - **打开的工具会在会话期间一直保持打开。** `dsh_mcp_open` 注册到调用智能体的作用域，在智能体被销毁之前没有任何东西会移除它们，因此把一切都打开的会话会持续为此付出代价。只打开任务需要的少数工具；一次性调用请使用 `dsh_mcp_call`。
 - **分组是侧边栏自身的成员记录。** 会话的项目是记录下来的，而不是在渲染时推导出来的，因此“它在该目录中运行”并不够——必须有东西把它挂上去。本插件会对它启动的会话这样做，并且对它此前启动过的会话补做一次，而且只会加入已经存在的项目。
 - 通过 MCP 启动的会话就是普通的 DSH 会话：它们出现在 Harness 会话列表中，可以在 GUI 中打开并继续。
+
+- **上传的图片与文件永久保留。** 本插件把字节交给 DSH 的附件服务（`@deepseek-ai/dsh-attachment`），后者**从不自动删除**任何对象——上游明确把保留策略与垃圾回收列进「尚未决定」的方向，因为恢复与分叉的会话可能共享同一份不可变对象。落点是 `$DSH_HOME/attachments/v1/`：
+
+  | 子目录 | 内容 | 可以删吗 |
+  |---|---|---|
+  | `objects/` | 归一化后的图片对象（`fileId` 就指向这里的某个对象） | **不能**：删了历史会话里的图就没了 |
+  | `file-objects/` | 原始上传文件（按内容寻址；`files/` 下另有一层以原文件名暴露的硬链接） | **不能**：同上 |
+  | `files/` | 上面那些文件的命名入口（同一 inode 的硬链接） | **不能** |
+  | `$DSH_HOME/cache/attachments/request-images/` | 为模型请求生成的缩放变体（**不在此目录**，是另建的缓存） | 可以，按需重建 |
+  | `tmp/` | 上传过程中的临时区 | 可以 |
+
+  `request-images` 用的是另一处缓存（`$DSH_HOME/cache/attachments/`），老的 `attachments/v1/request-images/` 是历史遗留目录，可以直接删。查看占用要把两边都算上：
+
+  ```bash
+  DSH_HOME="${DSH_HOME:-$HOME/.dsh}"
+  du -sh "$DSH_HOME/attachments" "$DSH_HOME/cache/attachments" 2>/dev/null
+  find "$DSH_HOME/attachments" -type f -exec ls -l {} + | sort -k5 -rn | head
+  ```
+
+  `find -printf` 是 GNU 扩展，macOS 上不能直接用，所以上面用的是 `ls -l` 排序。
+  参考：一台日更使用的桌面 Harness 上，`attachments/` 约 52 MB / 141 个文件（其中图片对象 19 MB、近 30 天新增 13 MiB），`cache/attachments/` 约 204 KB，磁盘余量 408 GB——按这个量级，清理不是近期问题。真要回收只能停机后手工删最旧的对象，并接受那些会话里的图片/文件从此读不出来。

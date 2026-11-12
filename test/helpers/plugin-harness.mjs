@@ -53,10 +53,26 @@ export function makeContext(services, disposers, hooks = new Map()) {
 
 /** Fake DSH services with one scripted turn. */
 export function makeServices() {
-  const events = []
+  // Sessions are separate document stores in DSH: a fake that shared one list
+  // would let one session's sequence numbers resolve inside another.
+  const eventsBySession = new Map()
+  let events = []
+  /** The durable log of one session, created on first use. */
+  function eventsFor(sessionId) {
+    if (!eventsBySession.has(sessionId)) eventsBySession.set(sessionId, [])
+    return eventsBySession.get(sessionId)
+  }
   let pendingPrompt
   let currentSessionId
-  let seq = 0
+  // Sequence numbers are per session in DSH, so a naive reader that ignores the
+  // session id would happily resolve another session's event. Keeping them
+  // per-session here is what makes that bug testable.
+  const seqCounters = new Map()
+  const nextSeq = (sessionId = currentSessionId) => {
+    const next = (seqCounters.get(sessionId) ?? 0) + 1
+    seqCounters.set(sessionId, next)
+    return next
+  }
   const appliedPermissions = []
   const resolvedAgents = []
   const modelSelections = []
@@ -75,7 +91,7 @@ export function makeServices() {
       const assistant = spec.role === 'assistant'
       events.push({
         type: assistant ? 'assistant/message' : 'user/message',
-        seq: ++seq,
+        seq: nextSeq(),
         time: Date.now(),
         data: assistant
           ? { message: { content: [{ type: 'text', text: spec.text }] } }
@@ -86,7 +102,7 @@ export function makeServices() {
 
   /** Append raw session events, for folding approvals and questions. */
   function seedEvents(specs) {
-    for (const spec of specs) events.push({ seq: ++seq, time: Date.now(), ...spec })
+    for (const spec of specs) events.push({ seq: nextSeq(), time: Date.now(), ...spec })
   }
 
   /** Register extra list entries with their own titles, for paging and query coverage. */
@@ -102,6 +118,7 @@ export function makeServices() {
 
   /** Messages an internal caller queued through the target agent's handle. */
   const injectedMessages = []
+  const admittedRequests = []
 
   /** Permission presets mirroring the deployment's read-only/write/full table. */
   const permissionOptions = [
@@ -152,7 +169,16 @@ export function makeServices() {
       appliedPermissions.push({ session, name })
       // Mirror the durable event the real service appends, so the transcript
       // fold can be exercised over the same log the plugin reads.
-      events.push({ type: 'permission/preset', seq: ++seq, time: Date.now(), data: { preset: name } })
+      // Resolve the session before its first prompt: the real service records
+      // the preset on the session it was applied to, which may not be the one
+      // currently being admitted.
+      // The fake's "live session" handle carries a placeholder id; the durable
+      // event belongs to the session this prompt is creating.
+      const target = typeof session === 'string'
+        ? session
+        : session?.sessionId ?? session?.header?.id ?? session?.session?.id ?? currentSessionId
+      const log = typeof target === 'string' ? eventsFor(target) : events
+      log.push({ type: 'permission/preset', seq: nextSeq(typeof target === 'string' ? target : currentSessionId), time: Date.now(), data: { preset: name } })
     },
   }
 
@@ -195,19 +221,23 @@ export function makeServices() {
 
   /** Admit one prompt the way the controller does, for both call paths. */
   function admit(request) {
+    admittedRequests.push(request)
     currentSessionId = request.sessionId
+    events = eventsFor(request.sessionId)
     pendingPrompt = request.content.map((part) => part.text).join('')
     events.push({
       type: 'user/message',
-      seq: ++seq,
+      seq: nextSeq(),
       time: Date.now(),
       data: { source: { kind: 'runtime-context' }, content: [{ type: 'text', text: 'INJECTED CONTEXT' }] },
     })
     events.push({
       type: 'user/message',
-      seq: ++seq,
+      seq: nextSeq(),
       time: Date.now(),
-      data: { source: { kind: 'user' }, content: [{ type: 'text', text: pendingPrompt }] },
+      // The real controller stores the whole content array, images included:
+      // that is what `dsh_read_attachment` reads back.
+      data: { source: { kind: 'user' }, content: request.content },
     })
     return { accepted: true }
   }
@@ -269,11 +299,11 @@ export function makeServices() {
       }
       const assistant = {
         type: 'assistant/message',
-        seq: ++seq,
+        seq: nextSeq(),
         time: Date.now(),
         data: { message: { content: [{ type: 'text', text: REPLY }] } },
       }
-      const end = { type: 'turn/end', seq: ++seq, time: Date.now(), data: { reason: { kind: 'completed' } } }
+      const end = { type: 'turn/end', seq: nextSeq(), time: Date.now(), data: { reason: { kind: 'completed' } } }
       const before = events.slice()
       events.push(assistant, end)
       runningSessions.delete(currentSessionId)
@@ -318,8 +348,10 @@ export function makeServices() {
 
   const sessionQuery = {
     async readSession(id) {
-      assert.equal(id, currentSessionId)
-      return { session: { cwd: '/tmp', createdAt: Date.now() }, events, inheritedEventCount: 0 }
+      // An id this fake never served is a real miss: answering with the last
+      // session's log would make cross-session assertions pass by accident.
+      const stored = eventsBySession.get(id) ?? (id === currentSessionId ? events : [])
+      return { session: { cwd: '/tmp', createdAt: Date.now() }, events: stored, inheritedEventCount: 0 }
     },
     async readTitleSnapshots(ids) {
       titleLookups.push([...ids])
@@ -637,6 +669,8 @@ export function makeServices() {
   return {
     services,
     webServer,
+    // Fail the next `count` storage attempts, so a test can reach the burn.
+    failSaves: (count = 1) => { services.attachments.__failSaves = count },
     getPrompt: () => pendingPrompt,
     setBusy: (value) => { busy = value },
     archivedIds: () => [...archived],
@@ -658,6 +692,7 @@ export function makeServices() {
     currentId: () => currentSessionId,
     registeredTools: () => [...registeredTools],
     injectedMessages: () => [...injectedMessages],
+    admittedRequests: () => [...admittedRequests],
     workspaces: () => workspaces.map((workspace) => ({ id: workspace.id, path: workspace.path, title: workspace.title, sessionIds: [...workspace.sessionIds] })),
     workspaceCalls: () => [...workspaceCalls],
     makeAgent,
@@ -677,7 +712,12 @@ export function makeServices() {
 async function listenRoutes(webServer) {
   return new Promise((resolve) => {
     const server = createServer((req, res) => {
-      const route = webServer.registered.find((entry) => entry.path === (req.url ?? '/').split('?')[0])
+      const path = (req.url ?? '/').split('?')[0]
+      // Mirrors the host: an exact route matches its path, a prefix route matches
+      // everything under it (the upload route needs the nonce from the suffix).
+      const route = webServer.registered.find((entry) => (entry.kind === 'prefix'
+        ? path === entry.path || path.startsWith(entry.path + '/')
+        : entry.path === path))
       if (!route) {
         res.writeHead(404)
         res.end()
@@ -703,12 +743,49 @@ async function listenRoutes(webServer) {
  * close() to dispose the plugin and remove the temporary home.
  */
 export async function createPluginHarness(options = {}) {
-  const { token = 'integration-token', label, applyOptions = {}, tempPrefix = 'dsh-mcp-test-' } = options
+  const { token = 'integration-token', label, applyOptions = {}, tempPrefix = 'dsh-mcp-test-', withAttachments = false } = options
   const dir = await mkdtemp(join(tmpdir(), tempPrefix))
   const endpointFile = join(dir, 'dsh-mcp-endpoint.json')
   const fake = makeServices()
   const hooks = new Map()
   const disposers = []
+  if (withAttachments) {
+    const saved = []
+    fake.services.attachments = {
+      imageLimits: { maxImagesPerMessage: 20, maxMessageImageBytes: 200 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] },
+      async saveImages(inputs) {
+        if ((fake.services.attachments.__failSaves ?? 0) > 0) {
+          fake.services.attachments.__failSaves -= 1
+          throw new Error('the provider refused these bytes')
+        }
+        return inputs.map((input, index) => {
+          const ref = {
+            attachmentId: 'att_' + (saved.length + index + 1),
+            mediaType: input.mediaType,
+            width: 1,
+            height: 1,
+            bytes: input.data.length,
+          }
+          saved.push({ ...ref, data: Buffer.from(input.data) })
+          return ref
+        })
+      },
+      async readImageRequest(ref, target) {
+        const found = saved.find((entry) => entry.attachmentId === ref?.attachmentId)
+        if (!found) throw new Error('unknown attachment ' + JSON.stringify(ref))
+        return {
+          variantId: 'v_' + found.attachmentId,
+          attachment: found,
+          data: found.data,
+          mediaType: found.mediaType,
+          width: target?.width ?? 1,
+          height: target?.height ?? 1,
+          bytes: found.data.byteLength,
+        }
+      },
+      __saved: saved,
+    }
+  }
   const ctx = makeContext(fake.services, disposers, hooks)
   // The plugin publishes its endpoint URL here; start from a clean shelf so one
   // test's URL cannot leak into another's assertion.
@@ -727,9 +804,11 @@ export async function createPluginHarness(options = {}) {
   const routes = webServer.registered
   const mcpRoute = routes.find((entry) => entry.path === '/mcp')
   const configRoute = routes.find((entry) => entry.path === '/mcp-config')
-  assert.equal(routes.length, 2, 'the plugin registers the MCP route and its configuration route')
+  assert.equal(routes.length, 3, 'the plugin registers the MCP route, its configuration route and the upload route')
   assert.equal(mcpRoute.kind, 'exact')
   assert.equal(configRoute.kind, 'exact')
+  const uploadRoute = routes.find((entry) => entry.path === '/mcp-files')
+  assert.equal(uploadRoute?.kind, 'prefix', 'the upload route is a prefix so it can carry the nonce')
 
   const server = await listenRoutes(webServer)
   const origin = 'http://127.0.0.1:' + server.address().port
@@ -793,6 +872,7 @@ export async function createPluginHarness(options = {}) {
     routes,
     mcpRoute,
     configRoute,
+    uploadRoute,
     server,
     address,
     configUrl,

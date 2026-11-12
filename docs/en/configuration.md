@@ -64,10 +64,19 @@ leaves unset; an explicit field always wins:
 | `clientsFile` | `$DSH_HOME/mcp/dsh-mcp-clients.json` | Where the caller registry (agents seen + session owners) is kept, mode 0600. |
 | `clientsFlushMs` | `5000` | How long registry writes are coalesced before they hit disk. |
 | `exposeToDsh` | `true` | Expose the MCP tools to DSH itself. `false` keeps the endpoint MCP-only. |
-| `exposeToDshMode` | `lazy` | `lazy` registers the three-tool front door, whose `dsh_mcp_tools` description already carries every published name and its required arguments (the result rows are name/purpose/native only), and lets a session open what it needs; `full` registers all twenty-six at load (permanent schema cost). An unknown value fails at load. |
+| `exposeToDshMode` | `lazy` | `lazy` registers the three-tool front door, whose `dsh_mcp_tools` description already carries every published name and its required arguments (the result rows are name/purpose/native only), and lets a session open what it needs; `full` registers all twenty-eight at load (permanent schema cost). An unknown value fails at load. |
 | `exposeToDshPage` | `true` | Serve the loopback configuration route the Web Plugins page's switch reads and writes. |
 | `configPath` | `<path>-config` | Route path of that configuration endpoint (`/mcp-config` by default). |
 | `allowedConfigOrigins` | `[]` | Origins allowed to drive the settings page from **outside loopback** (absolute origins such as `http://192.168.50.216:23022`). Empty by default: `Origin` must equal `Host`. When set, a matching `Origin` is aligned to the backend Host only for the existing trust comparison; browser authentication and cross-site checks still run. The loopback requirement still holds, so the only page this can admit is the one a reverse proxy on this machine forwards. Entries are normalized as canonical origins; malformed entries fail at load. |
+| `uploadMaxFiles` | `10` | How many upload links one `dsh_prepare_upload` mints (also the `fileIds` ceiling, clamped to 20). |
+| `uploadMaxFileBytes` | `20971520` | Byte ceiling for one upload (20 MiB). |
+| `uploadMaxBytes` | `67108864` | Byte ceiling for one mint (64 MiB). |
+| `uploadGlobalBytes` | `268435456` | Aggregate budget for in-flight plus stored files (256 MiB); past it new mints are refused. |
+| `uploadTtlMs` | `300000` | How long an upload link lives: from minting to the **first success** (5 minutes). Retries after a failure do not consume the slot. |
+| `fileIdTtlMs` | `3600000` | How long a stored `fileId` stays referenceable (1 hour); after that `dsh_run_prompt` refuses it. |
+| `uploadRequireSha256` | `false` | Require the mint to declare `sha256` and the bytes to match. Off by default; bytes are still checked for magic number and dimensions. |
+| `uploadMaxAttempts` | `3` | How many **content-level** failures (magic number, sha256, dimensions) one link tolerates before it is burned. |
+| `trustProxyHeaders` | `false` | Whether to trust `X-Forwarded-Host`/`-Proto` when building upload URLs. Off by default (`Host`). Turn it on behind a proxy that rewrites `Host`, or pass `clientBaseUrl`. |
 | `entryId` | `dsh-mcp-server` | Profile row the configuration page addresses when it saves the switch. |
 | `groupSessions` | `true` | Attach the Sessions this endpoint starts to the project their directory **already** has, and, once and in the background, restore the Sessions earlier builds left in "Ungrouped". |
 | `createGroups` | `false` | Let this endpoint invent a sidebar project for a directory that has none. Off by default: automation does not grow the sidebar on its own, and a Session whose directory has no project stays in Ungrouped. |
