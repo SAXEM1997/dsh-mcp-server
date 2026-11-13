@@ -115,8 +115,9 @@ not by `cordis.patch.yml`:
 - `mode: selected` means only the listed workspaces do; sessions elsewhere do not get the tools at
   all, and do not pay for their schema in the prompt.
 - **Anything unreadable narrows to nobody**: a damaged document or wrong field types end at
-  "selected, nobody", reported through `dsh_status.scope.notes` and on the settings page. Only a
-  *missing* file means `global`.
+  "selected, nobody", reported through `dsh_status.scope.notes` and on the settings page. A *missing*
+  file means `global` only on the first read; once a document has been read, its disappearance counts
+  as a change (narrow to nobody, note `scope-degraded`) and never quietly widens back to `global`.
 - **With no `workspaceRegistry`**: `selected` has nothing to select, so nobody sees the tools;
   `global` still means everyone, because the scope is then a no-op rather than an outage. The state
   carries `scope-unsupported`.
@@ -124,14 +125,16 @@ not by `cordis.patch.yml`:
   (`writeId` separates two writes in the same millisecond) while holding a lock. If disk moved on,
   the save returns `409 scope-conflict` **and immediately re-reads the document to adopt the winner's
   value**; the page must `GET` once before it may save again, so a blind retry is refused while a
-  deliberate one is allowed. A stamp that cannot be read returns `500 scope-write-unverified` instead
+  deliberate one is allowed. If that reload fails, the latch stays shut and the page keeps being
+  refused until it has really read the disk. A stamp that cannot be read returns `500 scope-write-unverified` instead
   of writing blind. A write that times out returns `500 scope-write-unverified` (it may have landed)
   and drops the baseline, so the next save is treated as a conflict. A replaced plugin returns
   `409 scope-disposed`; a lock held past the 8s wait budget returns `409 scope-lock-timeout`.
 - **The lock** records `{token, pid}` inside the lock file and only ever removes its own; a stale lock
   is claimed by an atomic `rename` and re-checked by inode before deletion, so a freshly created lock
-  is never renamed away. The stale window is 30s, but a lock whose owner pid is gone is reclaimed at
-  once.
+  is never renamed away. The stale window is 30s. Below it, a lock is reclaimed early only when it
+  names this host and its pid answers `ESRCH` — a pid means nothing on another machine, so a foreign
+  lock is never reclaimed on pid evidence, and a normal short hold never pays for the check.
 
 Why not in `cordis.patch.yml`: editing that row reloads the plugin, and a reload invalidates the tool
 set a running step already snapshotted. Scope is a runtime switch; changing it must not interrupt a turn.

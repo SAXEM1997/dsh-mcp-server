@@ -509,6 +509,76 @@ await check('a write that times out reports uncertainty instead of claiming noth
   assert.equal(error?.code, 'scope-write-unverified')
 })
 
+await check('a late load from an abandoned attempt never advances the baseline', async () => {
+  // The defect: `docRevision` only moves on a successful save, so a read that was
+  // abandoned at its deadline still committed minutes later — advancing the stamp to
+  // a document the page had never seen, and letting the next save pass the compare.
+  const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }] })
+  const store = memoryStore(JSON.stringify({ version: 1, mode: 'global', workspaceIds: [], updatedAt: 't1' }))
+  const scope = createToolScope({ ...world, store })
+  await scope.state()
+
+  const winner = JSON.stringify({ version: 1, mode: 'selected', workspaceIds: ['ws_a'], updatedAt: 't2' })
+  let release
+  const slow = new Promise((resolve) => { release = resolve })
+  let reads = 0
+  store.read = () => {
+    reads += 1
+    // The stamp read answers; the conflict reload hangs and is abandoned.
+    return reads === 1 ? winner : slow.then(() => winner)
+  }
+  store.write = () => {}
+
+  const conflict = await scope.save({ mode: 'global', workspaceIds: [] }).then(() => undefined, (error) => error)
+  assert.equal(conflict?.code, 'scope-conflict')
+
+  // The abandoned read finally answers. It must not be adopted behind the page's back.
+  release()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const shown = await scope.state()
+  assert.equal(shown.mode, 'global', 'an abandoned read must not replace what the page shows')
+})
+
+await check('deleting the document mid-session narrows to nobody instead of widening to global', async () => {
+  // The defect: a missing file was read as "never configured" every time, so deleting
+  // it silently widened the scope back to every workspace — the opposite of the
+  // fail-closed rule this module states everywhere else.
+  const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }] })
+  const store = memoryStore(JSON.stringify({ version: 1, mode: 'selected', workspaceIds: ['ws_a'], updatedAt: 't1' }))
+  const scope = createToolScope({ ...world, store })
+  await scope.state()
+
+  store.read = () => undefined // the file is gone
+  const first = await scope.save({ mode: 'selected', workspaceIds: ['ws_a'] }).then(() => 'ok', (error) => error.code)
+  assert.equal(first, 'scope-conflict', 'the page is told before anything is written')
+  await scope.acknowledge()
+  const shown = await scope.state()
+  assert.equal(shown.mode, 'selected', 'a deleted document must not widen to global')
+  assert.deepEqual(shown.workspaceIds, [], 'and it must not keep the old selection either')
+  const second = await scope.save({ mode: 'selected', workspaceIds: ['ws_a'] }).then(() => 'ok', (error) => error.code)
+  assert.equal(second, 'ok', 'the operator can still save over it')
+})
+
+await check('reading the page does not release the latch when the reload failed', async () => {
+  // The defect: `acknowledge()` cleared the latch unconditionally, so a GET after a
+  // failed reload told the page "you may save now" while the page was still showing
+  // the value the conflict had replaced.
+  const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }] })
+  const store = memoryStore(JSON.stringify({ version: 1, mode: 'global', workspaceIds: [], updatedAt: 't1' }))
+  const scope = createToolScope({ ...world, store })
+  await scope.state()
+
+  const winner = JSON.stringify({ version: 1, mode: 'selected', workspaceIds: ['ws_a'], updatedAt: 't2' })
+  let reads = 0
+  store.read = () => { reads += 1; if (reads > 1) throw new Error('disk unavailable'); return winner }
+  store.write = () => {}
+
+  await scope.save({ mode: 'global', workspaceIds: [] }).catch(() => {})
+  await scope.acknowledge()
+  const again = await scope.save({ mode: 'global', workspaceIds: [] }).then(() => 'ok', (error) => error.code)
+  assert.equal(again, 'scope-conflict', 'the latch stays shut until the page has really read the winner')
+})
+
 // --- summary -----------------------------------------------------------------
 
 console.log(`\n${passed} tool-scope checks passed, ${failures.length} failed`)

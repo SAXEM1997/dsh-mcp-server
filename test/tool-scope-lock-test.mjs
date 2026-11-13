@@ -16,6 +16,7 @@
 
 import assert from 'node:assert/strict'
 import { mkdir, readFile, stat, utimes, writeFile } from 'node:fs/promises'
+import os from 'node:os'
 import { randomUUID } from 'node:crypto'
 
 import { createFileStore } from '../lib/tool-scope.js'
@@ -143,12 +144,28 @@ await check('a lock whose owner is gone is reclaimed at once, not after the stal
   // save in between a failure, for nothing.
   const store = freshStore()
   const dead = 999_999
-  await writeFile(lockOf(store), JSON.stringify({ token: 'dead', pid: dead }), { mode: 0o600 })
+  await writeFile(lockOf(store), JSON.stringify({ token: 'dead', pid: dead, host: os.hostname() }), { mode: 0o600 })
+  // Past the probe floor, but far below the 30s stale window.
+  const recent = new Date(Date.now() - 1500)
+  await utimes(lockOf(store), recent, recent)
   const started = Date.now()
   let entered = false
   await store.withLock(async () => { entered = true })
   assert.equal(entered, true)
   assert.ok(Date.now() - started < 1000, 'a dead owner is not waited out')
+})
+
+await check('a lock written by another machine is never reclaimed on pid evidence', async () => {
+  // A pid only means something on the machine that wrote it: another host's live
+  // lock would answer ESRCH here, and reclaiming it would break mutual exclusion.
+  const store = freshStore()
+  await writeFile(lockOf(store), JSON.stringify({ token: 'other', pid: 999_999, host: 'some-other-host' }), { mode: 0o600 })
+  const recent = new Date(Date.now() - 1500)
+  await utimes(lockOf(store), recent, recent)
+  const started = Date.now()
+  const error = await store.withLock(async () => 'entered').then(() => undefined, (failure) => failure)
+  assert.equal(error?.code, 'scope-lock-timeout', 'it must wait, not steal')
+  assert.ok(Date.now() - started > 1000)
 })
 
 console.log(`\n${passed} lock checks passed, ${failures.length} failed`)
