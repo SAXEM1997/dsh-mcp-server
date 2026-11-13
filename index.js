@@ -34,7 +34,7 @@ import { createScopeHandler } from './lib/scope-route.js'
 import { errorText, sessionIdOf } from './lib/dsh-contracts.js'
 
 /** Keep in sync with package.json; reported through `initialize`. */
-const VERSION = '1.2.2'
+const VERSION = '1.2.3'
 
 /** This package's own name, as the profile's bundle row spells it. */
 const PACKAGE_NAME = (() => {
