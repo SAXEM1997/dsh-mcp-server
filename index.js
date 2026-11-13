@@ -21,6 +21,7 @@ import { createDshCapabilities, DEFAULT_MAX_CONCURRENT_TURNS, DEFAULT_TURN_TIMEO
 import { resolveConfigPreset } from './lib/config-presets.js'
 import { createClientRegistry, DEFAULT_CLIENT_FLUSH_MS, resolveCaller } from './lib/clients.js'
 import { createConfigHandler } from './lib/config-route.js'
+import { createConfigTrust } from './lib/config-trust.js'
 import { createMcpHttpHandler } from './lib/http-route.js'
 import { createUploadRouteHandler, createUploadStore, ROUTE_PREFIX } from './lib/file-upload.js'
 import { createInternalDelivery, MCP_MESSAGE_KIND } from './lib/dsh-delivery.js'
@@ -557,37 +558,13 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  /**
-   * Admit one configuration-page request.
-   *
-   * The route is loopback-only, but loopback includes the user's browser: a
-   * foreign page could otherwise POST settings (a CORS-simple `text/plain`
-   * request) or read them through DNS rebinding. Browser-shaped requests go
-   * through the Harness's own Host/Origin fence; a local tool without Origin is
-   * admitted because it already needs the loopback socket.
-   */
-  function configTrust(req) {
-    const origin = req.headers?.origin
-    const site = req.headers?.['sec-fetch-site']
-    const browserRequest = typeof origin === 'string' || typeof site === 'string'
-    if (!browserRequest) return true
-    if (site === 'cross-site') return false
-    if (connection) {
-      try {
-        return connection.requestRejection({ headers: req.headers }) === undefined
-      } catch (error) {
-        log('debug', 'configuration admission failed', { error: error instanceof Error ? error.message : String(error) })
-      }
-    }
-    if (typeof origin === 'string' && typeof req.headers?.host === 'string') {
-      try {
-        return new URL(origin).host === req.headers.host
-      } catch {
-        return false
-      }
-    }
-    return false
-  }
+  // The settings pages are admitted by the shared policy module so the same rules
+  // can be tested without a Host; see lib/config-trust.js for why a same-origin
+  // navigation carries no Origin header.
+  const configTrust = createConfigTrust({
+    getConnection: () => connection,
+    logger: log,
+  })
 
   const handler = createMcpHttpHandler({
     gateway,
