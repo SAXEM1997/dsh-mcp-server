@@ -112,8 +112,11 @@ DSH 会话能看见本插件的工具，由一份**独立的作用域文档**决
 - **保存时不覆盖别人的改动**：写盘前在锁内比对盘上的 `updatedAt|writeId`（`writeId` 用来区分同一毫秒
   的两次写）。盘上已被别处改过就返回 `409 scope-conflict`，**并立即重读盘上文档采纳赢家的值**，
   同时要求页面先重新读一次（`GET`）才允许再保存——这样「盲目重试」被拒，「看过再改」放行。
-  读盘失败无法核对时返回 `500 scope-write-unverified`，不盲写；插件已被替换则返回 `409 scope-disposed`，
-  锁被占用超过等待预算返回 `409 scope-lock-timeout`。
+  读盘失败无法核对时返回 `500 scope-write-unverified`，不盲写；写盘超时（可能已落盘）返回
+  `500 scope-write-unverified` 并丢弃基线，下次保存按冲突处理。插件已被替换则返回 `409 scope-disposed`，
+  锁被占用超过等待预算（8 秒）返回 `409 scope-lock-timeout`。
+- **锁**：写盘前在锁文件里记下持有者 `{token, pid}`，只删自己那把；抢占陈旧锁用 `rename` 原子认领，
+  并在认领后按 inode 回验，避免把别人刚建立的新锁删掉。陈旧窗 30 秒，但**持有者 pid 已消失时立即回收**。
 - **Harness 没有 `workspaceRegistry` 时**：`selected` 无可选之物 ⇒ 谁都不给；
   `global` 仍按原义全部可见（这时的作用域是空操作，不是中断）。状态里带 `scope-unsupported`。
 

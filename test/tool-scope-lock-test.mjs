@@ -125,8 +125,8 @@ await check('a lock that cannot be reclaimed gives up instead of spinning', asyn
   // The defect: when the stale lock could not be removed the loop `continue`d before
   // ever re-checking the deadline, so one wedged lock hung every later save forever.
   const store = freshStore()
-  await writeFile(lockOf(store), JSON.stringify({ token: 'wedged', pid: 3 }), { mode: 0o600 })
-  // Fresh, so it is not even a candidate for reclaiming: only the deadline can end it.
+  // A live owner: this process. Nothing but the deadline can end the wait.
+  await writeFile(lockOf(store), JSON.stringify({ token: 'wedged', pid: process.pid }), { mode: 0o600 })
   const started = Date.now()
   const error = await store.withLock(async () => 'entered').then(
     () => undefined,
@@ -136,6 +136,19 @@ await check('a lock that cannot be reclaimed gives up instead of spinning', asyn
   assert.equal(error.name, 'ScopeError')
   assert.equal(error.code, 'scope-lock-timeout')
   assert.ok(Date.now() - started < 12_000, 'it must respect the wait budget')
+})
+
+await check('a lock whose owner is gone is reclaimed at once, not after the stale window', async () => {
+  // Waiting out a 30s stale window for a process that is already dead costs every
+  // save in between a failure, for nothing.
+  const store = freshStore()
+  const dead = 999_999
+  await writeFile(lockOf(store), JSON.stringify({ token: 'dead', pid: dead }), { mode: 0o600 })
+  const started = Date.now()
+  let entered = false
+  await store.withLock(async () => { entered = true })
+  assert.equal(entered, true)
+  assert.ok(Date.now() - started < 1000, 'a dead owner is not waited out')
 })
 
 console.log(`\n${passed} lock checks passed, ${failures.length} failed`)

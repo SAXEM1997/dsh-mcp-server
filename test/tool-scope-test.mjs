@@ -387,7 +387,7 @@ await check('a conflict is not permanent: the next save compares against the new
   await assert.rejects(() => a.save({ mode: 'global' }), /scope-conflict/)
   // The latch refuses a blind retry; reading the document is what releases it.
   await assert.rejects(() => a.save({ mode: 'global' }), /scope-conflict/)
-  a.acknowledge()
+  await a.acknowledge()
   await a.save({ mode: 'global' })
   assert.equal(JSON.parse(await readFile(file, 'utf8')).mode, 'global')
 })
@@ -463,6 +463,50 @@ await check('a write that never returns fails the save instead of hanging it', a
   assert.ok(error, 'the save must not resolve')
   assert.equal(error.name, 'ScopeError')
   assert.ok(Date.now() - started < 8000, 'the critical section must be bounded')
+})
+
+await check('a conflict whose reload fails still shows the winner once the page reads', async () => {
+  // The defect: the baseline was advanced to the winner's stamp *before* the reload.
+  // When that reload failed, memory still held the loser's value, the latch cleared
+  // on the next GET, and the page then saved that stale value over the winner.
+  const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }] })
+  const store = memoryStore(JSON.stringify({ version: 1, mode: 'global', workspaceIds: [], updatedAt: 't1' }))
+  const scope = createToolScope({ ...world, store })
+  await scope.state()
+
+  // Someone else commits a narrower selection.
+  const winner = JSON.stringify({ version: 1, mode: 'selected', workspaceIds: ['ws_a'], updatedAt: 't2' })
+  store.writes.length = 0
+  let text = winner
+  // The stamp read (first) must work so the save reaches the conflict branch; the
+  // reload (second) is the one that fails.
+  let reads = 0
+  store.read = () => { reads += 1; if (reads > 1) throw new Error('disk unavailable'); return text }
+  store.write = (next) => { store.writes.push(next); text = next }
+
+  const conflict = await scope.save({ mode: 'global', workspaceIds: [] }).then(() => undefined, (error) => error)
+  assert.equal(conflict?.code, 'scope-conflict')
+  assert.equal(store.writes.length, 0, 'a conflict never writes')
+
+  // The disk comes back. The page reads before it may save again — and what it reads
+  // must be what actually won, not the value this instance failed to replace.
+  store.read = () => text
+  await scope.acknowledge()
+  const shown = await scope.state()
+  assert.equal(shown.mode, 'selected', 'the page must see the winner, not the loser')
+  assert.deepEqual(shown.workspaceIds, ['ws_a'])
+})
+
+await check('a write that times out reports uncertainty instead of claiming nothing changed', async () => {
+  // The defect: the 2s ceiling abandoned the *wait* but not the write, so a late
+  // rename could land after the lock was released — on top of another writer — while
+  // the caller had been told the document was untouched.
+  const world = harnessWorld({ workspaces: [{ id: 'ws_a', path: '/repo/a', sessionIds: [] }] })
+  const store = memoryStore(undefined)
+  store.write = () => new Promise(() => {})
+  const scope = createToolScope({ ...world, store })
+  const error = await scope.save({ mode: 'selected', workspaceIds: ['ws_a'] }).then(() => undefined, (failure) => failure)
+  assert.equal(error?.code, 'scope-write-unverified')
 })
 
 // --- summary -----------------------------------------------------------------

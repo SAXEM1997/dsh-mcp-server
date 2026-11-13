@@ -125,8 +125,13 @@ not by `cordis.patch.yml`:
   the save returns `409 scope-conflict` **and immediately re-reads the document to adopt the winner's
   value**; the page must `GET` once before it may save again, so a blind retry is refused while a
   deliberate one is allowed. A stamp that cannot be read returns `500 scope-write-unverified` instead
-  of writing blind. A replaced plugin returns `409 scope-disposed`; a lock held past the wait budget
-  returns `409 scope-lock-timeout`.
+  of writing blind. A write that times out returns `500 scope-write-unverified` (it may have landed)
+  and drops the baseline, so the next save is treated as a conflict. A replaced plugin returns
+  `409 scope-disposed`; a lock held past the 8s wait budget returns `409 scope-lock-timeout`.
+- **The lock** records `{token, pid}` inside the lock file and only ever removes its own; a stale lock
+  is claimed by an atomic `rename` and re-checked by inode before deletion, so a freshly created lock
+  is never renamed away. The stale window is 30s, but a lock whose owner pid is gone is reclaimed at
+  once.
 
 Why not in `cordis.patch.yml`: editing that row reloads the plugin, and a reload invalidates the tool
 set a running step already snapshotted. Scope is a runtime switch; changing it must not interrupt a turn.
