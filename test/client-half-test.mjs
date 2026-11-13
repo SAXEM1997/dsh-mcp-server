@@ -519,7 +519,7 @@ const allowed = await makeServer({ allowedOrigins: [LAN] })
 const allowHit = await fetch(allowed.base, { headers: { origin: LAN } })
 assert.equal(allowHit.status, 200, 'the operator-named origin reaches the settings route')
 assert.equal(trustInputs.at(-1).headers.origin, `http://${new URL(allowed.base).host}`, 'the trust function sees only an aligned Origin copy')
-checks.push('an allowlisted Origin is admitted')
+checks.push('an allowlisted Origin is admitted, loopback still required')
 
 const denied = await makeServer({ allowedOrigins: [LAN], trust: () => false })
 const deniedHit = await fetch(denied.base, { headers: { origin: LAN } })
