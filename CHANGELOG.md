@@ -3,6 +3,29 @@
 Notable changes to `dsh-mcp-btwy`. Older releases are listed on
 [GitHub Releases](https://github.com/baitouwuya/dsh-mcp-server/releases).
 
+## [2.0.1] - 2026-11-13
+
+### Changed
+
+- **Fork base is now upstream v1.2.4**, which adapts the wait path to DSH 0.2.2-rc.2 (the build this
+  deployment runs): a settled wait reports `timeout` instead of claiming completion, snapshots carry
+  `turn/end`, queued-turn boundaries are honoured, and legacy forks without `origin` count as top-level
+  sessions.
+- `VERSION` now really is read from `package.json` (2.0.0 shipped the description but not the change).
+
+## [1.2.4] - 2026-11-13
+
+### Fixed
+
+- Report a timeout when the Host closes a follow stream on abort, and process turn boundaries in
+  the opening snapshot so queued turns and their end reasons are not misreported.
+- Treat historical fork sessions without an `origin` as roots for progress sync, while following
+  explicitly marked subagents to their root.
+
+### Checks
+
+- 330 offline checks and the documentation guard. On DSH 0.2.2-rc.2, the 46 live HTTP and 4 stdio
+  checks passed; timeout handling and progress-sync delivery were also exercised with real sessions.
 ## [2.0.0] - 2026-11-13
 
 ### Changed
