@@ -3,6 +3,25 @@
 Notable changes to `dsh-mcp-btwy`. Older releases are listed on
 [GitHub Releases](https://github.com/baitouwuya/dsh-mcp-server/releases).
 
+## [2.0.2] - 2026-11-13
+
+### Fixed
+
+- **The task-start sync switch is hidden when its bundle row is absent.** This fork keeps
+  `dsh-work-sync` detached on purpose, and the Host refuses a sync write in that case by design. The
+  page still offered the switch, so every save carried `syncOnStart` and the whole request was
+  refused — taking unrelated changes down with it. The switch now appears only when
+  `sync.present` is not false, so a save never carries a setting this profile cannot hold. The
+  server-side refusal is unchanged.
+- **Workspace rows in the tool-scope section show their name.** `Switch.label` is only an accessible
+  name in this Harness (its own settings pages render the visible title as separate markup), so a
+  list of bare switches rendered as unlabelled toggles. Each workspace now gets its own row: name,
+  path, and the switch.
+
+### Checks
+
+- 463 offline checks, plus the documentation guard.
+
 ## [2.0.1] - 2026-11-13
 
 ### Changed
