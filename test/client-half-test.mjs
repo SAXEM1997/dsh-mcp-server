@@ -448,15 +448,12 @@ assert.ok(!collectText(globalRows).join('').includes('hermes'), 'no workspace en
 
 const selectedRows = exported.scopeRow(tScope, docOf({ mode: 'selected', workspaceIds: ['ws_a'] }), { mode: 'selected', workspaceIds: ['ws_a'] }, 'ready', undefined, scopeHandlers)
 assert.ok(selectedRows.length >= 3, 'a selection adds the workspace row')
-const scopeLabels = []
-const scanForLabels = (node) => {
-  if (!node || typeof node !== 'object') return
-  if (node.props && typeof node.props.label === 'string') scopeLabels.push(node.props.label)
-  const children = node.props && node.props.children
-  for (const child of Array.isArray(children) ? children : [children]) scanForLabels(child)
-}
-for (const rowNode of selectedRows) scanForLabels(rowNode)
-assert.ok(scopeLabels.includes('hermes'), 'the workspace row offers a switch per workspace')
+// `Switch.label` is only an accessible name in this Harness: a row that carries the
+// workspace name in that prop alone renders as an unlabelled toggle. Assert the
+// text a person would actually see.
+const selectedText = collectText(selectedRows).join('')
+assert.match(selectedText, /hermes/, 'each workspace row shows its name as visible text')
+assert.match(selectedText, /\/repo\/hermes/, 'and its path, so two same-named workspaces are distinguishable')
 // The section saves on a button, not on change, so the button has to say when
 // there is nothing to save. `disabled` is the only signal the page has.
 const buttonsIn = (rows) => {
