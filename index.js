@@ -33,8 +33,21 @@ import { createFileStore, createToolScope } from './lib/tool-scope.js'
 import { createScopeHandler } from './lib/scope-route.js'
 import { errorText, sessionIdOf } from './lib/dsh-contracts.js'
 
-/** Keep in sync with package.json; reported through `initialize`. */
-const VERSION = '1.2.3'
+/**
+ * This package's own version, read from its manifest.
+ *
+ * It used to be a hand-copied constant, and it drifted: `/mcp-config` and
+ * `initialize` reported the upstream base while the installed package was two
+ * minor versions ahead, so the first question anyone asks when a route misbehaves
+ * — "which build is actually running?" — had a wrong answer.
+ */
+const VERSION = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
+  } catch {
+    return '0.0.0'
+  }
+})()
 
 /** This package's own name, as the profile's bundle row spells it. */
 const PACKAGE_NAME = (() => {
