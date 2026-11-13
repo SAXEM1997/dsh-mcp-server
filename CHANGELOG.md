@@ -3,6 +3,25 @@
 Notable changes to `dsh-mcp-btwy`. Older releases are listed on
 [GitHub Releases](https://github.com/baitouwuya/dsh-mcp-server/releases).
 
+## [1.4.0] - 2026-11-12
+
+### Added
+
+- **Tool scope.** Which workspaces may see the DSH-facing tools is now a switch: `global` (default,
+  unchanged behaviour) or a selected list of workspaces. Sessions in the other workspaces do not get
+  the tools at all, so they no longer carry the 28 tool schemas (~9.7K tokens) in their prompt.
+- A "Tool scope" section on the settings page switches it, with one switch per workspace and an
+  explicit Save; `dsh_status.scope` reports mode, selection and any degraded note.
+
+### Notes
+
+- The scope lives in its own document (`$DSH_HOME/mcp/tool-scope.json`, override with `toolScopeFile`),
+  not in `cordis.patch.yml`: saving through the configuration editor reloads the plugin, which would
+  invalidate the tool set a running step already snapshotted.
+- An unreadable or malformed document narrows to nobody and says so; only a missing file means `global`.
+- Enforcement is the registration-time `when` predicate, so a change takes effect from the next step and
+  never interrupts the one in flight.
+
 ## [1.3.0] - 2026-11-12
 
 ### Added

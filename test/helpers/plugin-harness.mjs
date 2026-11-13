@@ -395,6 +395,9 @@ export function makeServices() {
   const workspaceCalls = []
   const workspaceRegistry = {
     get archivedSessionIds() { return [...archived] },
+    // The tool scope reads this to know which workspaces exist; without it the
+    // plugin reports `scope-unsupported`, which is a different code path.
+    list() { return workspaces },
     async sessionKnown(id) {
       return id === currentSessionId || id === 'session-cold'
     },
@@ -694,6 +697,9 @@ export function makeServices() {
     injectedMessages: () => [...injectedMessages],
     admittedRequests: () => [...admittedRequests],
     workspaces: () => workspaces.map((workspace) => ({ id: workspace.id, path: workspace.path, title: workspace.title, sessionIds: [...workspace.sessionIds] })),
+    // The registry itself, so a test can seed a workspace before touching a route
+    // that lists them (otherwise every assertion compares empty sets).
+    workspaceRegistry,
     workspaceCalls: () => [...workspaceCalls],
     makeAgent,
     agentTools,
@@ -804,7 +810,9 @@ export async function createPluginHarness(options = {}) {
   const routes = webServer.registered
   const mcpRoute = routes.find((entry) => entry.path === '/mcp')
   const configRoute = routes.find((entry) => entry.path === '/mcp-config')
-  assert.equal(routes.length, 3, 'the plugin registers the MCP route, its configuration route and the upload route')
+  const scopeRoute = routes.find((entry) => entry.path === '/mcp-scope')
+  assert.equal(routes.length, 4, 'the plugin registers the MCP route, its configuration route, the upload route and the scope route')
+  assert.equal(scopeRoute?.kind, 'exact', 'the scope route answers one fixed path')
   assert.equal(mcpRoute.kind, 'exact')
   assert.equal(configRoute.kind, 'exact')
   const uploadRoute = routes.find((entry) => entry.path === '/mcp-files')
@@ -814,6 +822,7 @@ export async function createPluginHarness(options = {}) {
   const origin = 'http://127.0.0.1:' + server.address().port
   const address = origin + '/mcp'
   const configUrl = origin + '/mcp-config'
+  const scopeUrl = origin + '/mcp-scope'
 
   let id = 0
   const nextId = () => ++id
@@ -876,6 +885,7 @@ export async function createPluginHarness(options = {}) {
     server,
     address,
     configUrl,
+    scopeUrl,
     nextId,
     rpc,
     call,

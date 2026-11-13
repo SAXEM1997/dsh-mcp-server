@@ -44,7 +44,7 @@ const uiMock = {
   Switch: (props) => ({ type: 'button', props: { role: 'switch', 'aria-checked': props.checked ? 'true' : 'false', 'aria-label': props.label, disabled: props.disabled }, children: [] }),
   SegmentedControl: (props) => ({ type: 'div', props: { role: 'tablist', 'aria-label': props.label }, children: (props.options || []).map((option) => ({ type: 'button', props: { 'aria-pressed': option.value === props.value ? 'true' : 'false', disabled: props.disabled }, children: [option.label] })) }),
   Pill: (props) => ({ type: props.onClick ? 'button' : 'span', props: { 'aria-pressed': props.active ? 'true' : 'false', disabled: props.disabled }, children: [props.children] }),
-  Button: (props) => ({ type: 'button', props: { onClick: props.onClick }, children: [props.children] }),
+  Button: (props) => ({ type: 'button', props: { onClick: props.onClick, disabled: props.disabled, variant: props.variant }, children: [props.children] }),
   // The Harness bubble chassis and Markdown renderer, as the module finds them
   // in a real page: a delivered message reuses both instead of a look-alike.
   UserMessageBubble: (props) => ({ type: 'div', props: { ...props, 'data-bubble': 'harness' }, children: props.children === undefined ? [] : [].concat(props.children) }),
@@ -414,6 +414,70 @@ assert.equal(unknown.type, 'span', 'an unloaded Session is not a dead click targ
 assert.equal(collectText(unknown).join(''), '来自「s3」·智能体消息', 'the unknown row still says where it came from')
 assert.equal(exported.buildOriginLine({ source: { kind: 'user' }, t: tZh }, { byId: {} }), null, 'a typed message renders no header')
 checks.push('an unloaded sender still shows the short id, without a dead click')
+
+// --- the tool-scope rows -------------------------------------------------------
+// The section is the only part of the page that does not save on change, so what
+// it offers depends on the draft: an unsupported Host shows a reason and no
+// controls, and "global" leaves the workspace switches out of the tree entirely.
+const tScope = (key) => ({
+  scopeLabel: '工具作用域', scopeHint: '哪些工作区可见', scopeGlobal: '全局', scopeSelected: '仅选定工作区',
+  scopeWorkspaces: '工作区', scopeEmpty: '没有所属工作区的会话一律看不见。', scopeSave: '保存', scopeReset: '重置',
+  scopeDirty: '有未保存的改动', scopeUnsupported: '当前 Harness 不提供工作区注册表，作用域不可用。',
+  loading: '读取中',
+}[key] ?? key)
+const scopeHandlers = { onMode: () => {}, onToggle: () => {}, onSave: () => {}, onReset: () => {}, dirty: false }
+const docOf = (extra) => ({ supported: true, mode: 'global', workspaceIds: [], notes: [], workspaces: [{ id: 'ws_a', title: 'hermes', path: '/repo/hermes' }], ...extra })
+
+const unsupportedRows = exported.scopeRow(tScope, docOf({ supported: false }), null, 'ready', undefined, scopeHandlers)
+assert.equal(unsupportedRows.length, 1, 'an unsupported Host gets one row, not controls')
+assert.match(collectText(unsupportedRows[0]).join(''), /不提供工作区注册表/)
+
+const globalRows = exported.scopeRow(tScope, docOf({}), { mode: 'global', workspaceIds: [] }, 'ready', undefined, scopeHandlers)
+assert.equal(globalRows.length, 2, 'global shows the mode row and the save row only')
+assert.ok(!collectText(globalRows).join('').includes('hermes'), 'no workspace entries while global')
+
+const selectedRows = exported.scopeRow(tScope, docOf({ mode: 'selected', workspaceIds: ['ws_a'] }), { mode: 'selected', workspaceIds: ['ws_a'] }, 'ready', undefined, scopeHandlers)
+assert.ok(selectedRows.length >= 3, 'a selection adds the workspace row')
+const scopeLabels = []
+const scanForLabels = (node) => {
+  if (!node || typeof node !== 'object') return
+  if (node.props && typeof node.props.label === 'string') scopeLabels.push(node.props.label)
+  const children = node.props && node.props.children
+  for (const child of Array.isArray(children) ? children : [children]) scanForLabels(child)
+}
+for (const rowNode of selectedRows) scanForLabels(rowNode)
+assert.ok(scopeLabels.includes('hermes'), 'the workspace row offers a switch per workspace')
+// The section saves on a button, not on change, so the button has to say when
+// there is nothing to save. `disabled` is the only signal the page has.
+const buttonsIn = (rows) => {
+  const found = []
+  const walk = (node) => {
+    if (!node || typeof node !== 'object') return
+    // The Harness primitives are function components, so the element keeps the
+    // component as `type` and the props as-is; the disabled flag is on the props.
+    if (node.props && node.props.disabled !== undefined) found.push(node)
+    const children = node.props && node.props.children
+    for (const child of Array.isArray(children) ? children : [children]) walk(child)
+  }
+  for (const row of rows) walk(row)
+  return found
+}
+// Only the save row carries a `variant`; the mode control's own buttons do not
+// disable with the draft, so they are not what this checks.
+const saveRowButtons = (rows) => buttonsIn(rows).filter((button) => button.props.variant !== undefined)
+const cleanButtons = saveRowButtons(exported.scopeRow(tScope, docOf({}), { mode: 'global', workspaceIds: [] }, 'ready', undefined, scopeHandlers))
+assert.equal(cleanButtons.length, 2, 'save and reset')
+assert.ok(cleanButtons.every((button) => button.props.disabled === true), 'an untouched draft has nothing to save')
+const dirtyButtons = saveRowButtons(exported.scopeRow(tScope, docOf({}), { mode: 'selected', workspaceIds: [] }, 'ready', undefined, { ...scopeHandlers, dirty: true }))
+assert.ok(dirtyButtons.every((button) => button.props.disabled === false), 'a changed draft enables saving')
+// A failed first read has no document to render; the row must still say so
+// instead of sitting on "loading" forever.
+const failedRows = exported.scopeRow(tScope, null, null, 'error', 'network down', scopeHandlers)
+assert.match(collectText(failedRows).join(''), /network down/)
+
+checks.push('the save button reports whether there is anything to save')
+
+checks.push('the tool-scope rows follow the draft and refuse to pretend when unsupported')
 
 // --- the settings route's Origin allowlist ------------------------------------
 // A page served from another origin (the usual LAN + reverse-proxy setup) is a

@@ -28,6 +28,8 @@ import { createQuestionBroker } from './lib/questions.js'
 import { McpGateway, SERVER_NAME } from './lib/protocol.js'
 import { registerDshTools } from './lib/dsh-tools-bridge.js'
 import { groupOwnedSessions } from './lib/workspace-grouping.js'
+import { createFileStore, createToolScope } from './lib/tool-scope.js'
+import { createScopeHandler } from './lib/scope-route.js'
 import { errorText, sessionIdOf } from './lib/dsh-contracts.js'
 
 /** Keep in sync with package.json; reported through `initialize`. */
@@ -203,6 +205,11 @@ export function apply(ctx, config = {}) {
   const configPath = typeof config.configPath === 'string' && config.configPath
     ? resolvePath({ path: config.configPath })
     : `${path}-config`
+  // The scope route sits beside the settings route it belongs to, and keeps the
+  // same "custom path wins" rule so an operator who moved one can move both.
+  const scopePath = typeof config.scopePath === 'string' && config.scopePath
+    ? resolvePath({ path: config.scopePath })
+    : `${path}-scope`
 
   /** Who called, and which sessions each caller created; survives a restart. */
   const clients = createClientRegistry({ file: clientsFile, logger: log, flushMs: clientsFlushMs })
@@ -440,6 +447,24 @@ export function apply(ctx, config = {}) {
   })
 
 
+  // The tool scope lives in its own sidecar rather than in cordis.patch.yml:
+  // saving a setting through the config editor reloads this plugin, which would
+  // swap the registrations a running step already snapshotted.
+  const toolScope = createToolScope({
+    // A getter, not a value: the registry can appear after this plugin is applied,
+    // and a fixed `undefined` would mean "unsupported" for the whole process.
+    getRegistry: () => (typeof ctx?.get === 'function' ? ctx.get('workspaceRegistry') : undefined),
+    store: createFileStore(
+      typeof config.toolScopeFile === 'string' && config.toolScopeFile
+        ? resolve(config.toolScopeFile)
+        : join(dshHome, 'mcp', 'tool-scope.json'),
+    ),
+    logger: log,
+  })
+  // A replaced plugin must stop writing: its late save would overwrite whatever the
+  // instance that replaced it has already published.
+  if (typeof ctx?.effect === 'function') ctx.effect(() => () => toolScope.dispose(), 'dsh-mcp-server: tool scope')
+
   const capabilities = createDshCapabilities(ctx, {
     logger: log,
     sessionOwners: clients,
@@ -464,6 +489,7 @@ export function apply(ctx, config = {}) {
     busyMode,
     configPreset,
     uploadStore,
+    toolScope,
     openSession: queueOpenSession,
     syncStatus: () => workSyncStatus(),
     questions,
@@ -476,7 +502,7 @@ export function apply(ctx, config = {}) {
   // internal caller is clamped to its own authority by `lib/dsh-capabilities.js`,
   // never the endpoint's or the deployment's.
   if (exposeToDsh) {
-    const registered = registerDshTools({ ctx, capabilities, logger: log, mode: exposeToDshMode })
+    const registered = registerDshTools({ ctx, capabilities, logger: log, mode: exposeToDshMode, scope: toolScope })
     dshToolsState.names = registered.names
     dshToolsState.via = registered.via
   }
@@ -656,6 +682,7 @@ export function apply(ctx, config = {}) {
       exposeToDshMode,
       mcpPath: path,
       configPath,
+      scopePath,
       published: dshToolsState.published,
       registered: dshToolsState.names,
       groupSessions,
@@ -805,6 +832,21 @@ export function apply(ctx, config = {}) {
     await editor.edit(entry, (current) => ({ ...(current && typeof current === 'object' ? current : {}), ...surface }))
     return patch
   }
+
+  const disposeScopeRoute = exposeToDshPage
+    ? ctx.webServer.register({
+      kind: 'exact',
+      path: scopePath,
+      handler: createScopeHandler({
+        scope: toolScope,
+        getRegistry: () => (typeof ctx?.get === 'function' ? ctx.get('workspaceRegistry') : undefined),
+        trust: configTrust,
+        allowedOrigins: allowedConfigOrigins,
+        maxBodyBytes: configMaxBodyBytes,
+        logger: log,
+      }),
+    })
+    : undefined
 
   const disposeConfigRoute = exposeToDshPage
     ? ctx.webServer.register({
@@ -984,6 +1026,7 @@ export function apply(ctx, config = {}) {
     }
     try {
       disposeConfigRoute?.()
+      disposeScopeRoute?.()
     } catch (error) {
       log('debug', 'configuration route disposal failed', { error: error instanceof Error ? error.message : String(error) })
     }
@@ -1007,6 +1050,7 @@ export function apply(ctx, config = {}) {
     dshTools: dshToolsState.names.length,
     clientPage: clientPageState(),
     configPath: exposeToDshPage ? configPath : undefined,
+    scopePath: exposeToDshPage ? scopePath : undefined,
     clients: clientsFile,
     restrictToOwner,
     answerUserRequests,
