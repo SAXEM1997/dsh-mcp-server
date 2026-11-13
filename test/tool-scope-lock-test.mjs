@@ -168,5 +168,17 @@ await check('a lock written by another machine is never reclaimed on pid evidenc
   assert.ok(Date.now() - started > 1000)
 })
 
+await check('a lock from a process that died just now is reclaimed without the full window', async () => {
+  // The most common crash is dying the instant after taking the lock. Waiting out the
+  // 30s stale window for that turns a one-line crash into half a minute of failures.
+  const store = freshStore()
+  await writeFile(lockOf(store), JSON.stringify({ token: 'just-died', pid: 999_999, host: os.hostname() }), { mode: 0o600 })
+  const started = Date.now()
+  let entered = false
+  await store.withLock(async () => { entered = true })
+  assert.equal(entered, true)
+  assert.ok(Date.now() - started < 3000, 'a dead local owner is found within a probe or two')
+})
+
 console.log(`\n${passed} lock checks passed, ${failures.length} failed`)
 if (failures.length) process.exitCode = 1

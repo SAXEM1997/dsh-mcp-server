@@ -134,7 +134,10 @@ not by `cordis.patch.yml`:
   is claimed by an atomic `rename` and re-checked by inode before deletion, so a freshly created lock
   is never renamed away. The stale window is 30s. Below it, a lock is reclaimed early only when it
   names this host and its pid answers `ESRCH` — a pid means nothing on another machine, so a foreign
-  lock is never reclaimed on pid evidence, and a normal short hold never pays for the check.
+  lock is never reclaimed on pid evidence, and a normal short hold never pays for the check. The
+  probe runs at most every 250ms, so a local process that died a moment ago is usually reclaimed
+  within two or three probes instead of waiting out the window; a lock with no `host` field counts
+  as foreign and waits the full 30s.
 
 Why not in `cordis.patch.yml`: editing that row reloads the plugin, and a reload invalidates the tool
 set a running step already snapshotted. Scope is a runtime switch; changing it must not interrupt a turn.
